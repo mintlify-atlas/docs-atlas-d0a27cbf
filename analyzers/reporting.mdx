@@ -1,7 +1,7 @@
 ---
 title: "consolidate, visual_graph, prioritization, and html_report"
 sidebarTitle: "Reporting"
-description: "The final pipeline tier joins all metrics (consolidate), renders call graphs (visual_graph), ranks units by migration risk (prioritization), and produces the HTML report."
+description: "consolidate joins all metrics, visual_graph renders the call graph, prioritization ranks units by risk, and html_report writes a standalone report.html."
 ---
 
 The terminal tier of the Forti4D pipeline aggregates everything that every prior step has produced. `consolidate.py` performs the full join, pulling one row per unit from the inventory and left-joining every metric from every other report into a single 34-column CSV. `visual_graph.py` renders the call graph as Graphviz DOT files — colored by reachability, shaped by unit type, clustered by source file. `prioritization.py` distills all metrics into a single 0–100 composite risk score and assigns each unit to a migration priority tier. Finally, `html_report.py` converts that ranked list into a self-contained HTML file with summary cards and a filterable, sortable unit table that needs no external dependencies to open in any browser.

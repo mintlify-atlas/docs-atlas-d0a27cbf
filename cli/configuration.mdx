@@ -1,7 +1,7 @@
 ---
-title: "Configuring Forti4D with Environment Variables"
+title: "Forti4D Environment Variable Configuration Reference"
 sidebarTitle: "Configuration"
-description: "Forti4D reads FORT_SRC, FORT_OUT, and FORT_WORKERS environment variables. Learn how CLI flags, env vars, and defaults interact."
+description: "Forti4D reads FORT_SRC, FORT_OUT, and FORT_WORKERS environment variables. Learn how CLI flags, env vars, and built-in defaults interact at runtime."
 ---
 
 All path and parallelism settings in Forti4D flow through a single central module — `config.py`. It defines three configurable values: the Fortran source directory, the output directory, and the worker count for parallel steps. Each value is resolved at runtime using a consistent priority chain: an explicit CLI flag always wins, followed by the corresponding environment variable, and finally a hardcoded default. This means you can configure a project once via environment variables for a whole session, or override everything on a single command line without touching your shell.

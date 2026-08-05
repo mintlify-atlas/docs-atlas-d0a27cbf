@@ -1,7 +1,7 @@
 ---
-title: "complexity, sloc, and clones — Code Metrics"
+title: "complexity, sloc, and clones — Fortran Code Metrics"
 sidebarTitle: "Complexity & Clones"
-description: "complexity computes McCabe cyclomatic complexity per unit. sloc counts logical statements. clones detects identical, similar, and diverged duplicate unit pairs."
+description: "complexity computes McCabe CC per unit, sloc counts logical statements, and clones detects IDENTICAL, SIMILAR, and DIVERGED duplicate unit pairs."
 ---
 
 `complexity.py`, `sloc.py`, and `clones.py` are the core metrics scripts of Tier 3. `complexity.py` counts decision points in each unit to compute McCabe cyclomatic complexity, giving a direct measure of how difficult a unit is to test and maintain. `sloc.py` precisely counts lines of code by classifying every physical line as blank, comment, code, or continuation, then aggregates logical statement counts per unit. `clones.py` compares same-named units across files using normalized token sequences to identify whether duplicates are exact copies, maintained variants, or fully independent diverged implementations. All three outputs feed into `consolidate.py` for the final per-unit summary.

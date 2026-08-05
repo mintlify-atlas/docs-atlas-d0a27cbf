@@ -1,7 +1,7 @@
 ---
-title: "dependencies — Build the Fortran Call Graph"
+title: "dependencies — Fortran Call Graph and Coupling Metrics"
 sidebarTitle: "Dependencies"
-description: "dependencies resolves CALL, USE, and function-call references into a call graph, computes Fan-In and Fan-Out per unit, and produces seven dep_*.csv output files."
+description: "dependencies resolves CALL, USE, and FUNC_CALL references into a call graph, computes Fan-In/Fan-Out per unit, and writes seven dep_*.csv output files."
 ---
 
 `dependencies.py` is step 2 of the pipeline. It reads the unit inventory and all Fortran source files to resolve every `CALL`, `USE`, and inline function-call reference into a directed edge in the corpus call graph. The result is seven output files covering the full spectrum of dependency information: raw relationships, resolved graph edges, per-unit coupling metrics, ambiguous definitions, external orphans, file-level summaries, and INCLUDE cross-references. All seven files are always written — even when empty — so downstream scripts can reliably distinguish "no data" from "step never ran."

@@ -1,7 +1,7 @@
 ---
 title: "profiler and block_analysis — Statement Classification"
 sidebarTitle: "Profiler & Blocks"
-description: "profiler classifies every logical statement in every source file into density categories. block_analysis builds per-file control-flow block topology from the audit CSVs."
+description: "profiler classifies every Fortran statement into density groups. block_analysis maps control-flow block nesting per unit from the audit CSVs it produces."
 ---
 
 `profiler.py` and `block_analysis.py` form the statement-classification tier of the pipeline. `profiler.py` reads every Fortran source file and classifies each logical statement into one of five groups — calculation, control flow, I/O, legacy, and declarations — producing both a per-unit density summary and a per-file audit CSV for every source file. `block_analysis.py` then takes those audit CSVs and constructs a hierarchical view of control-flow block nesting per unit, useful for understanding structural depth without reading raw source. Together, these two steps feed five later analyzers that all depend on the `audit/` directory.

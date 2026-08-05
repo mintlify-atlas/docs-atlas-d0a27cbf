@@ -1,7 +1,7 @@
 ---
-title: "Forti4D: Fortran Static Analysis Toolkit"
+title: "Forti4D: Fortran Static Analysis Toolkit for F77/F90/F95"
 sidebarTitle: "Introduction"
-description: "Forti4D is a 19-step static analysis pipeline for Fortran F77/F90/F95 codebases. Audit complexity, dead code, clones, and migration risk without an external parser."
+description: "19-step Fortran static analysis pipeline for F77/F90/F95 codebases. Audit complexity, dead code, clones, and migration risk — no external parser needed."
 ---
 
 Forti4D is a Python toolkit for static analysis of Fortran source code. It is designed specifically for real-world hybrid Fortran corpora — projects that mix F77 fixed-form, F90 free-form, and F95 constructs in ways that cause general-purpose parsers such as fparser and OFP to fail. Instead of relying on an external parser, Forti4D uses a custom logical-line reader and regex patterns calibrated for legacy Fortran code, giving it reliable coverage across the widest possible range of scientific and engineering codebases.

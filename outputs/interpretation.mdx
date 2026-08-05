@@ -1,5 +1,5 @@
 ---
-title: "Interpreting Forti4D Analysis Results"
+title: "Interpreting Forti4D Output: Scores, Tiers, and Strategies"
 sidebarTitle: "Interpretation"
 description: "Learn how to read forti4d's migration risk scores, complexity tiers, structural roles, and reachability status to plan a Fortran modernization effort."
 ---
@@ -196,9 +196,9 @@ Rules are evaluated in order; the first match wins.
 | :--- | :--- |
 | `ENTRY_POINT` | A `PROGRAM` or `IMPLICIT-MAIN` unit — the executable root. |
 | `REACHABLE` | Reachable from at least one entry point. |
-| `NOT_REACHABLE` | Not reachable from any entry point — dead code candidate. |
+| `UNREACHABLE` | Not reachable from any entry point — dead code candidate. |
 
-Before deleting `NOT_REACHABLE` units, check for common false positives:
+Before deleting `UNREACHABLE` units, check for common false positives:
 
 - **Alternative versions:** files named `*_old.f90`, `*_ori.f90`, or `* - Copie.f90` are often inactive fallbacks. Confirm with `dep_00_ambiguities.csv` — if the unit name appears in another file, it is a duplicate, not necessarily unused.
 - **Utility executables:** small programs in the same directory that are compiled separately and have no caller in the current corpus. Check `report_structure_analysis.csv` — if the file is classified as `ISLAND`, this is likely the case.

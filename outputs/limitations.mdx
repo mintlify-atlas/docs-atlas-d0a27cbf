@@ -1,5 +1,5 @@
 ---
-title: "Forti4D Known Limitations and Future Work"
+title: "Forti4D Limitations, Caveats, and Planned Improvements"
 sidebarTitle: "Limitations"
 description: "Forti4D does not support Fortran 2003+ OOP features, C preprocessor directives, or full symbol-state tracking. This page lists all known limitations."
 ---
@@ -55,7 +55,7 @@ Forti4D is calibrated for real-world F77/F90/F95 hybrid corpora — the kind of 
 
     Consequences:
     - If an `INCLUDE` file defines shared constants or common block layouts used across many source files, those definitions will not appear in `symbol_variables.csv` or `type_definitions.csv` as standalone entries.
-    - `report_reachability.csv` cannot classify an included file as `REACHABLE` or `NOT_REACHABLE` because it is not inventoried as a unit.
+    - `report_reachability.csv` cannot classify an included file as `REACHABLE` or `UNREACHABLE` because it is not inventoried as a unit.
   </Accordion>
 
   <Accordion title="Assumed character lengths may not be fully captured">

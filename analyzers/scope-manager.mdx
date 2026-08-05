@@ -1,7 +1,7 @@
 ---
 title: "E4 ScopeManager — Symbols, Derived Types, and EQUIVALENCE"
 sidebarTitle: "Scope Manager"
-description: "The E4 ScopeManager tier extracts symbol-level microstructure: variable declarations, derived TYPE definitions, IMPLICIT rules, and EQUIVALENCE aliasing groups."
+description: "The E4 ScopeManager tier extracts symbol-level microstructure: variable declarations, derived TYPE definitions, IMPLICIT rules, and EQUIVALENCE aliasing."
 ---
 
 The E4 ScopeManager is the symbol-level analysis layer of Forti4D, corresponding to Axis Z of the MI4D model. While the earlier pipeline tiers answer "what units exist and how they relate," E4 answers "what is *declared inside* each unit." The three scripts in this tier — `symbols.py`, `derived_types.py`, and `equivalences.py` — all read the `audit/*_DEBUG.csv` files produced by `profiler.py` and the inventory for scope resolution. Their outputs feed back into `cross_analysis.py` (E4 ICM penalty) and `consolidate.py` (E4 summary columns), and they are the basis for the Scope Health section of `PROJECT_SUMMARY.md`.

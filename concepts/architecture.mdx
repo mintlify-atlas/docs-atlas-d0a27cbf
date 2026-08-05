@@ -1,7 +1,7 @@
 ---
-title: "Forti4D Pipeline Architecture and Design"
+title: "Forti4D Architecture: Sequential Pipeline and Script Tiers"
 sidebarTitle: "Architecture"
-description: "Forti4D organizes analysis into four tiers: support libraries, the original pipeline, extended analysis, and the E4 ScopeManager. Each script reads CSV files from earlier steps."
+description: "Forti4D runs 19 scripts in four tiers that communicate via CSV files. No script modifies another's output, and individual steps can be run independently."
 ---
 
 Forti4D is a sequential pipeline of independent Python scripts orchestrated by `pipeline.py` — the `forti4d` CLI command. Each script reads one or more CSV files produced by earlier steps and writes its own output files; no script modifies another script's output. Input Fortran source files are read from the directory configured via `FORT_SRC` (or `--project`). All output files are written to `results/` by default, or to the directory configured via `FORT_OUT` (or `--output`). The full pipeline contains 19 steps and can be run in its entirety with a single `forti4d` invocation, or individual steps can be executed independently when their required inputs are already present.

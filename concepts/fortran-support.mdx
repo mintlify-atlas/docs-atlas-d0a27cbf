@@ -1,5 +1,5 @@
 ---
-title: "Fortran Standard Support in Forti4D"
+title: "Fortran Standard Coverage: F77, F90, F95, and Limitations"
 sidebarTitle: "Fortran Support"
 description: "Forti4D fully supports FORTRAN 77, Fortran 90, and Fortran 95. Learn what constructs are analyzed and what limitations apply to hybrid codebases."
 ---
@@ -68,11 +68,11 @@ The reader handles the following in a single pass:
 </Accordion>
 
 <Accordion title="Content-based format detection">
-  Format detection is **content-based**, not extension-based. The reader examines the structure of each line to determine whether it follows fixed-form or free-form conventions. A `.F` file written in free-form style is processed correctly; a `.f90` file containing legacy fixed-form blocks is likewise handled. This makes the reader robust on corpora where file extensions do not reliably indicate the format in use.
+  Format detection uses the file extension as an initial guess (`.f`, `.for`, `.f77` → fixed-form; `.f90`, `.f95` → free-form), then applies a content heuristic that overrides the extension if they disagree. **Content takes precedence over extension.** A `.f90` file that actually contains fixed-form source is processed correctly as fixed-form; a `.f` file written in free-form F90 style is likewise handled. This makes the reader robust on corpora where file extensions do not reliably indicate the format in use.
 </Accordion>
 
 <Note>
-  Because format detection is content-based rather than extension-based, files with non-standard extensions (such as `.F` for free-form source) are handled correctly without any configuration. The reader infers the layout from the content itself.
+  Because content takes precedence over extension, mixed or unconventional file naming is handled correctly without any configuration. For example, a `.f` file written in free-form F90 style — where the extension suggests fixed-form — is detected and processed as free-form automatically.
 </Note>
 
 ## C Preprocessor Directives

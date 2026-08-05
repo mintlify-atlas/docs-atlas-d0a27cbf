@@ -1,5 +1,5 @@
 ---
-title: "forti4d CLI — Pipeline Flags and Step Reference"
+title: "forti4d CLI Pipeline — Flags and Step Reference Guide"
 sidebarTitle: "Pipeline CLI"
 description: "Complete reference for the forti4d command: all flags, step names, and usage patterns for controlling the 19-step Fortran static analysis pipeline."
 ---
@@ -80,7 +80,7 @@ forti4d --no-log-file
 </ParamField>
 
 <ParamField path="--quiet" type="flag">
-  Raises the console log threshold from `INFO` to `WARNING`, reducing terminal noise. Step progress headers and per-step ✓/✗ results are still printed. The log file always retains full `DEBUG`-level detail regardless of this flag.
+  Raises the console log threshold from `INFO` to `WARNING`, reducing terminal noise. In quiet mode each step is collapsed to a single line showing the step name, ✓ or ✗, and elapsed time — the full horizontal-rule headers are suppressed. The log file always retains full `DEBUG`-level detail regardless of this flag.
 </ParamField>
 
 <ParamField path="--workers N" type="integer" default="1">
@@ -104,7 +104,7 @@ All 19 steps run in the dependency order shown below. Pass any `Name` to `--from
 | 1 | `inventory` | Build unit inventory from source files |
 | 2 | `dependencies` | Build call graph and compute Fan-In/Fan-Out |
 | 3 | `profiler` | Classify statements and produce `audit/` DEBUG files |
-| 4 | `blocks` | Block topology analysis (one file per source, to `output/blocks/`) |
+| 4 | `blocks` | Block topology analysis (one file per source, to `<FORT_OUT>/blocks/`) |
 | 5 | `structure_analysis` | Classify files by architectural role |
 | 6 | `cross_analysis` | Assign migration strategy per unit |
 | 7 | `executive_summary` | Generate executive summary |

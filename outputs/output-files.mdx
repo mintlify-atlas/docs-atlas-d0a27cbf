@@ -1,5 +1,5 @@
 ---
-title: "Forti4D Output Files Reference"
+title: "Forti4D Output Files: Full Pipeline Reference (30+ Files)"
 sidebarTitle: "Output Files"
 description: "Complete reference for all 30+ output files produced by the forti4d pipeline: CSV reports, audit files, DOT graphs, and the HTML report."
 ---
@@ -92,7 +92,7 @@ Every time forti4d runs, it writes all output files to the directory configured 
     | `report_complexity.csv` | `complexity.py` | McCabe cyclomatic complexity (CC) per unit, with a level label: `LOW` (1–10), `MEDIUM` (11–20), `HIGH` (21–50), `CRITICAL` (>50). |
     | `common_usage.csv` | `common_blocks.py` | F77 COMMON block usage — which units share each block. |
     | `common_coupling.csv` | `common_blocks.py` | COMMON block coupling risk: `LOW` (1 unit), `MEDIUM` (2–4 units), `HIGH` (5+ units). |
-    | `report_reachability.csv` | `reachability.py` | Reachability from all entry points via BFS: `ENTRY_POINT`, `REACHABLE`, or `NOT_REACHABLE`. |
+    | `report_reachability.csv` | `reachability.py` | Reachability from all entry points via BFS: `ENTRY_POINT`, `REACHABLE`, or `UNREACHABLE`. |
     | `report_sloc.csv` | `sloc.py` | Precise SLOC count per unit: LOC, physical SLOC, net SLOC (logical statements only), blank lines, comments, continuations, comment density %. |
     | `report_clones.csv` | `clones.py` | Duplicate unit pairs across files, classified as `IDENTICAL`, `SIMILAR`, or `DIVERGED`. |
     | `report_consolidated.csv` | `consolidate.py` | All metrics joined into a single CSV — one row per unit, 34 columns. The primary analysis surface for manual investigation. |

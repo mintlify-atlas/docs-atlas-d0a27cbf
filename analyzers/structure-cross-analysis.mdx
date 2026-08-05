@@ -1,7 +1,7 @@
 ---
-title: "structure_analysis and cross_analysis — Architectural Classification"
+title: "structure_analysis and cross_analysis — Code Migration"
 sidebarTitle: "Structure & Migration"
-description: "structure_analysis classifies source files by architectural role (CRITICAL_NODE, ORCHESTRATOR, etc.). cross_analysis assigns a migration strategy to each unit."
+description: "structure_analysis classifies files by architectural role; cross_analysis assigns migration strategies using coupling metrics and density profiles."
 ---
 
 `structure_analysis.py` and `cross_analysis.py` form the architectural classification tier of the pipeline. `structure_analysis.py` uses the call graph coupling data to assign each source file a structural role — identifying which files are indispensable shared libraries, which orchestrate many dependencies, and which are completely isolated. `cross_analysis.py` then crosses statement density profiles with coupling metrics to compute two composite indices per unit and recommend a concrete migration strategy for each. Together with `executive_summary.py`, these three scripts close the Tier 2 pipeline and produce the primary outputs that guide migration planning.

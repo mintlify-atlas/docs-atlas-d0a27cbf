@@ -1,7 +1,7 @@
 ---
 title: "reachability — Dead Code Detection from Entry Points"
 sidebarTitle: "Reachability"
-description: "reachability performs BFS from all PROGRAM and IMPLICIT-MAIN units to classify every program unit as ENTRY_POINT, REACHABLE, or NOT_REACHABLE (dead code)."
+description: "reachability performs BFS from all PROGRAM and IMPLICIT-MAIN units to classify every program unit as ENTRY_POINT, REACHABLE, or UNREACHABLE (dead code)."
 ---
 
 `reachability.py` detects dead code by traversing the resolved call graph from every known entry point. Starting from each `PROGRAM` and `IMPLICIT-MAIN` unit in the corpus, it performs a breadth-first search following `CALL`, `USE`, and `FUNC_CALL` edges, and classifies every program unit as an entry point itself, reachable from at least one entry point, or not reachable from any entry point. Units in the third category are dead code candidates — they exist in the source tree but are never called. `report_reachability.csv` is consumed by `consolidate.py` and can optionally be supplied to `cross_analysis.py` to force `ELIMINATE` as the migration strategy for confirmed dead units.

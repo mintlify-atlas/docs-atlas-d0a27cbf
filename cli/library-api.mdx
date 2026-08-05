@@ -1,7 +1,7 @@
 ---
-title: "Forti4D Python Library API — run_pipeline()"
+title: "Forti4D Python Library API — run_pipeline() Reference"
 sidebarTitle: "Library API"
-description: "Use forti4d as an in-process Python library. run_pipeline() runs all 19 analyzers without subprocess, returning results in memory via PipelineResult."
+description: "Use forti4d as an in-process Python library. run_pipeline() runs all 19 analyzers without subprocesses, returning structured results via PipelineResult."
 ---
 
 As of v0.8.0, Forti4D exposes a fully in-process Python library API for embedding Fortran static analysis directly into Python programs, notebooks, and CI scripts. Rather than shelling out to the `forti4d` command, you call `forti4d.run_pipeline()` from your own code. All 19 analyzers run inside the same process — no subprocesses, no temp files for inter-step communication — and results are returned in memory through a `PipelineResult` object. The CLI itself uses this exact API internally.
@@ -166,13 +166,27 @@ To enable logging, call `configure_logging()` before `run_pipeline()`:
 import forti4d
 
 # Enable console (INFO+) and file logging (DEBUG+)
-forti4d.configure_logging(results_dir="results/", quiet=False)
+forti4d.configure_logging(
+    results_dir="results/",
+    console_level="INFO",  # console log level when quiet=False
+    quiet=False,           # True → raise console threshold to WARNING
+    log_file=True,         # False → skip the file sink entirely
+    log_path=None,         # override log file path; default: <results_dir>/forti4d.log
+)
 
 result = forti4d.run_pipeline(
     source_dir="/path/to/fortran",
     results_dir="results/",
 )
 ```
+
+`configure_logging` signature: `configure_logging(results_dir, *, console_level="INFO", quiet=False, log_file=True, log_path=None)`. It returns the resolved log file `Path`, or `None` when `log_file=False`.
+
+- `results_dir` — directory used to derive the default log file path (`<results_dir>/forti4d.log`).
+- `console_level` — loguru level string for the console sink when `quiet=False`. Defaults to `"INFO"`.
+- `quiet` — when `True`, overrides `console_level` to `"WARNING"`. The file sink always captures `DEBUG`-level output regardless of this flag.
+- `log_file` — set to `False` to skip the file sink entirely (console output only). Equivalent to the `--no-log-file` CLI flag.
+- `log_path` — absolute or relative path to override the default log file location. Ignored when `log_file=False`.
 
 Passing `quiet=True` raises the console threshold to `WARNING` while the log file still captures full `DEBUG`-level output — the same behavior as the `--quiet` CLI flag.
 
