@@ -1,0 +1,281 @@
+---
+title: "Interpreting Forti4D Analysis Results"
+sidebarTitle: "Interpretation"
+description: "Learn how to read forti4d's migration risk scores, complexity tiers, structural roles, and reachability status to plan a Fortran modernization effort."
+---
+
+Forti4D produces more than thirty output files, but making sense of them does not require reading every CSV at once. The pipeline is deliberately layered: a summary HTML report provides the fastest entry point, a ranked prioritization CSV surfaces what matters most, and the consolidated table answers every detailed question. This guide walks through each layer in the order you should approach it, explains what the scores and labels mean, and highlights the patterns that most frequently indicate migration risk.
+
+---
+
+## Where to Start
+
+<Steps>
+  <Step title="Open report.html">
+    Open `<FORT_OUT>/report.html` in a browser. It is a fully self-contained file — no internet connection required. The top of the page shows a **priority summary**: one card per tier (CRITICAL / HIGH / MEDIUM / LOW / DEAD_CODE / TOTAL) with unit counts and percentages. This gives you an instant sense of the corpus risk profile before looking at any individual unit.
+
+    Below the summary is the **main unit table** — filterable by tier, sortable by any column. Use the filter buttons to focus on one tier at a time.
+  </Step>
+  <Step title="Review report_prioritization.csv">
+    `report_prioritization.csv` is the authoritative ranked list. It sorts units by tier and then by composite score descending within each tier. For each unit it shows the five per-component scores (`Score_CC`, `Score_FanIn`, `Score_Legacy`, `Score_Clon`, `Score_E4`) so you can see *why* a unit received its overall score — useful when calibrating effort estimates.
+  </Step>
+  <Step title="Drill into report_consolidated.csv">
+    `report_consolidated.csv` has one row per unit and 34 columns covering every metric produced by the pipeline. Open it in a spreadsheet, sort and filter, and add computed columns (such as `CC × Fan_In`) to surface the specific risk patterns described below.
+  </Step>
+  <Step title="Render a call graph for context">
+    Metric tables tell you *what* but not *where*. Render `graph_simple.dot` (or a per-entry-point subgraph) with Graphviz to see the dependency structure at a glance. The graph is especially useful for understanding why a high-Fan-In unit is risky and which executables share the most dependencies.
+  </Step>
+</Steps>
+
+---
+
+## Migration Risk Tiers
+
+`prioritization.py` assigns every unit to one of five tiers based on a composite score from 0 to 100. Dead code is separated from the scoring scale and always appears last.
+
+| Tier | Score | What it means |
+| :--- | :--- | :--- |
+| `CRITICAL` | ≥ 40 | High complexity or criticality. Requires early planning — changes here carry the highest risk of regression. |
+| `HIGH` | ≥ 25 | Significant risk in at least one dimension. Plan carefully before modifying. |
+| `MEDIUM` | ≥ 12 | Moderate risk. Schedule for migration but not urgent. |
+| `LOW` | < 12 | Low risk. Straightforward to migrate or rewrite. |
+| `DEAD_CODE` | — | `UNREACHABLE` from any entry point. Evaluate for deletion before migrating. |
+
+<Tip>
+  Start your triage with `DEAD_CODE`. Confirmed dead units can often be removed entirely, which shrinks the analysis surface before you address anything else. See [the reachability section below](#reachability-and-dead-code) for caveats.
+</Tip>
+
+---
+
+## Risk Score Components
+
+The composite score is a weighted sum across five signals. Each component is normalized to 0–1 before weighting; the final score is multiplied by 100.
+
+```
+Score = (W_CC × CC_norm + W_FAN_IN × FanIn_norm + W_LEGACY × Legacy_norm
+       + W_CLONE × Clone_norm + W_E4 × E4_norm) × 100
+```
+
+<CardGroup cols={2}>
+  <Card title="Cyclomatic Complexity — 30%" icon="code-branch">
+    **Weight:** 0.30
+
+    McCabe CC counts the number of linearly independent paths through a unit. Normalized against the 95th percentile of CC among reachable units (not the maximum) to prevent a single outlier from compressing the scale.
+
+    | CC range | Level |
+    | :--- | :--- |
+    | 1–10 | LOW |
+    | 11–20 | MEDIUM |
+    | 21–50 | HIGH |
+    | > 50 | CRITICAL |
+
+    **Caveat:** a high CC in a large `SELECT CASE` dispatcher is mechanically complex but structurally simple. Confirm with `Pct_Control` in the density columns — if control statements dominate and `Fan_Out` is low, the unit is a dispatcher, not a tangled algorithm.
+  </Card>
+  <Card title="Fan-In Criticality — 30%" icon="arrow-down-to-line">
+    **Weight:** 0.30
+
+    Fan-In counts how many other units call or USE this one. High Fan-In means the unit is widely reused — any change propagates risk to all callers. Normalized against the 95th percentile of Fan-In among reachable units.
+
+    | Fan-In | Risk |
+    | :--- | :--- |
+    | 0 | Not called — dead code or entry point |
+    | 1–4 | Low coupling |
+    | 5–9 | Moderate — review before changing |
+    | ≥ 10 | High — treat as core infrastructure |
+
+    The most dangerous combination is **high CC + high Fan-In**: complex logic that many callers depend on. Sort `report_consolidated.csv` by `CC × Fan_In` descending to surface these "core knots."
+  </Card>
+  <Card title="Legacy Density — 20%" icon="triangle-exclamation">
+    **Weight:** 0.20
+
+    `Pct_Legacy` measures the proportion of statements classified as legacy constructs: `COMMON` blocks, `GOTO`, `EQUIVALENCE`, and `IMPLICIT` (non-NONE) statements. Normalization is direct: `Pct_Legacy / 100`.
+
+    Units with high legacy density that are also widely called (`Fan_In > 3`) are the riskiest to modify — any change must account for global state, implicit typing, and memory aliasing simultaneously.
+  </Card>
+  <Card title="Clone State — 15%" icon="copy">
+    **Weight:** 0.15
+
+    Clone penalty based on the *worst* clone state among all pairs involving the unit.
+
+    | Clone state | Penalty |
+    | :--- | :--- |
+    | `DIVERGED` | 1.0 (full penalty) |
+    | `SIMILAR` | 0.5 |
+    | `IDENTICAL` | 0.25 |
+    | None | 0.0 |
+
+    A `DIVERGED` pair is the most dangerous: the same unit name exists in multiple files but the implementations have drifted apart. Callers may be linked to either version depending on the build configuration.
+  </Card>
+  <Card title="E4 Scope Risk — 5%" icon="shield-halved">
+    **Weight:** 0.05
+
+    Flags two scope-level hazards that make safe migration harder:
+
+    - **No `IMPLICIT NONE`** (0.70 of the component): default Fortran typing is active. Undeclared variables may exist; any rename or extraction can silently change types.
+    - **`EQUIVALENCE` aliasing** (0.30 of the component): two or more variables share the same memory address, breaking type inference and making it unsafe to reorder or rename variables without full alias analysis.
+
+    A unit with neither `IMPLICIT NONE` nor `EQUIVALENCE` receives the full component score.
+  </Card>
+</CardGroup>
+
+<Note>
+  The component weights (0.30 / 0.30 / 0.20 / 0.15 / 0.05) and tier thresholds (40 / 25 / 12) are project-defined values calibrated for typical Fortran legacy corpora. If the score distribution is too concentrated in one tier, adjust `W_CC`, `W_FAN_IN`, `THRESH_CRITICAL`, etc. in `prioritization.py`.
+</Note>
+
+---
+
+## Migration Strategies
+
+`cross_analysis.py` assigns each unit one of seven recommended strategies based on two composite indices:
+
+- **IVC (Calculation Value Index):** equals `Pct_Calc`. How much of the unit is pure algorithmic computation.
+- **ICM (Migration Complexity Index):** combines control-flow density, legacy density, Fan-Out, Fan-In, and an optional E4 penalty for missing `IMPLICIT NONE` or the presence of `EQUIVALENCE`.
+
+Rules are evaluated in order; the first match wins.
+
+| Strategy | Condition | Recommended action |
+| :--- | :--- | :--- |
+| `ELIMINATE` | `Reachability_Status = UNREACHABLE` | Confirmed dead code. Review and delete. |
+| `ANALYZE_UTILITY` | Fan-In = 0 (no reachability data) | Not called — verify whether truly unused, then delete or document. |
+| `DIRECT_MIGRATION` | IVC > 50 and ICM < 30 | Pure algorithm, low coupling. Translate directly to the target language. |
+| `REPLACE_LIB` | Pct_IO > 30 or Pct_Decl > 40, and IVC < 20 | Infrastructure or boilerplate. Replace with a standard library call rather than translating line-by-line. |
+| `REFACTOR_CORE` | ICM > 25 and Fan-In > 5 | High-risk, high-dependency knot. Refactor the interfaces and reduce coupling *before* any migration begins. |
+| `REWRITE_ISOLATED` | ICM > 20 | Complex but low systemic impact. Rewrite from scratch in the target language; the limited callers make it feasible to swap. |
+| `STANDARD_MIGRATION` | All other connected units | Normal migration — translate with standard practices. |
+
+<Tip>
+  `REFACTOR_CORE` units are the highest-planning items in the strategy table. Do not begin migrating them until their callers are mapped and interfaces are stabilized. Starting with `DIRECT_MIGRATION` units instead builds momentum and validates the migration toolchain on low-risk targets first.
+</Tip>
+
+<Warning>
+  In a standard full pipeline run, `cross_analysis` executes at step 6 — before `reachability`, `symbols`, and `equivalences` are available. The `ELIMINATE` rule and the E4 ICM penalty are therefore silently skipped on a first pass. Re-run cross analysis manually after the pipeline completes to apply the full rule engine:
+
+  ```bash
+  forti4d --from cross_analysis --only cross_analysis
+  ```
+</Warning>
+
+---
+
+## Structural Roles
+
+`structure_analysis.py` classifies each source *file* into an architectural role based on its Fan-In/Fan-Out profile. This classification appears in `report_structure_analysis.csv` and is visible in the consolidated report.
+
+<CardGroup cols={2}>
+  <Card title="CRITICAL_NODE" icon="star">
+    High Fan-In. Many other units depend on this file. It is the core library layer of the system. Changes here require thorough testing of all dependents before and after migration.
+  </Card>
+  <Card title="ORCHESTRATOR" icon="arrows-split-up-and-left">
+    High Fan-Out. This file coordinates many parts of the system. Orchestrators are hard to test in isolation because they depend on so many callees. Migrate their dependencies before migrating the orchestrator itself.
+  </Card>
+  <Card title="ENTRY_POINT" icon="door-open">
+    Contains a `PROGRAM` or `IMPLICIT-MAIN` unit. The executable roots of the corpus. Use these as the starting nodes for per-executable subgraph analysis (`visual_graph.py --entry <name>`).
+  </Card>
+  <Card title="WORKER" icon="wrench">
+    Moderate Fan-In and Fan-Out — a service routine. Workers are the bulk of most corpora and are typically the lowest-risk migration targets once CRITICAL_NODE dependencies are stabilized.
+  </Card>
+  <Card title="ISLAND" icon="island-tropical">
+    No connections — neither called nor calling anything in the corpus. May be a standalone utility program compiled separately, an old backup file, or genuine dead code. Confirm with `dep_00_ambiguities.csv` and `report_reachability.csv`.
+  </Card>
+  <Card title="MIXED" icon="shuffle">
+    Both high Fan-In and high Fan-Out. Acts as both a core dependency and an orchestrator. These files sit at junctions in the call graph and deserve early attention in any migration plan.
+  </Card>
+</CardGroup>
+
+**Pattern:** a large number of `CRITICAL_NODE` files with high Fan-In signals a shared utility layer — a set of routines called by almost everything else. These must be migrated (or wrapped) first, before any of their callers can move.
+
+**Pattern:** a large `ISLAND` count often means the corpus contains many standalone utility programs or historical backups that were never cleaned up. Check `dep_00_ambiguities.csv` to see if any island unit names also appear in other files.
+
+---
+
+## Reachability and Dead Code
+
+`reachability.py` performs a breadth-first search from all entry points (`PROGRAM` and `IMPLICIT-MAIN` units), following `CALL`, `USE`, and `FUNC_CALL` edges. Every unit is classified as:
+
+| Status | Meaning |
+| :--- | :--- |
+| `ENTRY_POINT` | A `PROGRAM` or `IMPLICIT-MAIN` unit — the executable root. |
+| `REACHABLE` | Reachable from at least one entry point. |
+| `NOT_REACHABLE` | Not reachable from any entry point — dead code candidate. |
+
+Before deleting `NOT_REACHABLE` units, check for common false positives:
+
+- **Alternative versions:** files named `*_old.f90`, `*_ori.f90`, or `* - Copie.f90` are often inactive fallbacks. Confirm with `dep_00_ambiguities.csv` — if the unit name appears in another file, it is a duplicate, not necessarily unused.
+- **Utility executables:** small programs in the same directory that are compiled separately and have no caller in the current corpus. Check `report_structure_analysis.csv` — if the file is classified as `ISLAND`, this is likely the case.
+- **External entry points:** units called from a Makefile, a shell script, or a test harness outside the analyzed directory.
+
+---
+
+## Reading the Call Graph DOT Files
+
+`visual_graph.py` produces Graphviz DOT files. Render them with:
+
+```bash
+# PNG for quick viewing
+dot -Tpng results/graph_simple.dot -o results/graph_simple.png
+
+# SVG for interactive zooming in a browser
+dot -Tsvg results/graph_complete.dot -o results/graph_complete.svg
+
+# Per-entry-point subgraph
+dot -Tpng results/graph_mcdes.dot -o results/graph_mcdes.png
+```
+
+### Node colors (reachability)
+
+| Color | Hex | Meaning |
+| :--- | :--- | :--- |
+| Blue | `#4472C4` | Entry point (PROGRAM / IMPLICIT-MAIN) |
+| Green | `#70AD47` | Reachable unit |
+| Grey | `#A6A6A6` | Dead code (UNREACHABLE) |
+| Yellow | `#FFD966` | Reachable from multiple selected entry points (`--entry ep1 ep2`) |
+
+### Node shapes (unit type)
+
+| Shape | Unit type |
+| :--- | :--- |
+| `doubleoctagon` | PROGRAM, IMPLICIT-MAIN |
+| `hexagon` | MODULE |
+| `ellipse` | FUNCTION |
+| `diamond` | BLOCK_DATA |
+| `box` | SUBROUTINE (and default) |
+
+### Edge styles (dependency type)
+
+| Style | Dependency |
+| :--- | :--- |
+| Solid black | `CALL` |
+| Solid green | `FUNC_CALL` |
+| Dashed blue | `USE` (module import) |
+
+Each node label shows `unit_name`, `CC=<value>`, and `Fi=<Fan_In>` when metadata is available. Nodes are grouped into clusters by source file.
+
+**Useful graph queries:**
+
+- **Who calls this unit?** Find the node in the graph, follow incoming edges back to callers.
+- **What does this executable depend on?** Run `visual_graph.py --entry <name>` — the resulting subgraph shows the full transitive dependency tree.
+- **Do two executables share dependencies?** Run `visual_graph.py --entry ep1 ep2` — yellow nodes appear at every shared dependency, revealing the integration risk between the two programs.
+
+---
+
+## Common Patterns and What They Signal
+
+<Accordion title="Many CRITICAL units with high Fan-In → shared utility layer">
+  A cluster of CRITICAL-tier units all with high Fan-In points to a shared library layer used by most of the corpus. These units are the highest-risk change targets. Before migrating anything else, either migrate these units first (so callers can be updated to the new interface) or wrap them behind a stable adapter layer that both old and new code can call.
+</Accordion>
+
+<Accordion title="Large ISLAND count → fragmented or unconnected code">
+  A high number of ISLAND files means the corpus contains many units that are not connected to the main call graph. This is common in scientific codebases that have accumulated standalone utilities, experimental programs, and historical copies. Audit each ISLAND against `report_reachability.csv` and `dep_00_ambiguities.csv` before deciding whether to migrate or delete.
+</Accordion>
+
+<Accordion title="High Pct_Legacy + high Fan-In → risky shared state">
+  Units with high `Pct_Legacy` (COMMON, GOTO, EQUIVALENCE) that are also widely called carry double risk: the legacy constructs create implicit global state or aliasing *and* any change propagates to many callers. Refactor these to use explicit interfaces (module variables or subroutine arguments) before any migration.
+</Accordion>
+
+<Accordion title="DIVERGED clones → build-time ambiguity">
+  A `DIVERGED` clone pair means the same unit name exists in multiple files with drifted implementations. Which version is linked depends on the build configuration. This is a correctness risk before it is a migration risk — confirm with `dep_00_ambiguities.csv` which callers resolve to which copy.
+</Accordion>
+
+<Accordion title="Low Pct_Legacy + Implicit_None = YES + low Fan-In → ideal migration start">
+  Filter `report_consolidated.csv` for `Pct_Legacy < 5%`, `Implicit_None = YES`, and `Fan_In < 3`. These units are fully typed, contain almost no legacy constructs, and have few callers. They are the easiest to extract, test independently, and migrate first — ideal for validating your migration toolchain before tackling riskier units.
+</Accordion>

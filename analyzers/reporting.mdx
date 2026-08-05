@@ -1,0 +1,223 @@
+---
+title: "consolidate, visual_graph, prioritization, and html_report"
+sidebarTitle: "Reporting"
+description: "The final pipeline tier joins all metrics (consolidate), renders call graphs (visual_graph), ranks units by migration risk (prioritization), and produces the HTML report."
+---
+
+The terminal tier of the Forti4D pipeline aggregates everything that every prior step has produced. `consolidate.py` performs the full join, pulling one row per unit from the inventory and left-joining every metric from every other report into a single 34-column CSV. `visual_graph.py` renders the call graph as Graphviz DOT files — colored by reachability, shaped by unit type, clustered by source file. `prioritization.py` distills all metrics into a single 0–100 composite risk score and assigns each unit to a migration priority tier. Finally, `html_report.py` converts that ranked list into a self-contained HTML file with summary cards and a filterable, sortable unit table that needs no external dependencies to open in any browser.
+
+## consolidate.py — Unified Per-Unit Report
+
+<Note>
+`consolidate.py` is **step 16** of the pipeline. It must run **after all other analysis scripts**.
+</Note>
+
+### Inputs
+
+All prior reports: `inventory_report.csv`, `report_sloc.csv`, `report_complexity.csv`, `dep_03_impact_matrix.csv`, `report_density.csv`, `report_reachability.csv`, `common_usage.csv`, `symbol_variables.csv`, `symbol_signatures.csv`, `symbol_implicit.csv`, `type_definitions.csv`, `equivalences.csv`, and the `audit/*_DEBUG.csv` directory. All sources except the inventory are optional — missing files produce empty values for their columns without stopping the script.
+
+### Output: `report_consolidated.csv`
+
+One row per program unit, sorted alphabetically by `File` then `Unit`. The join key is `(File, Unit)`.
+
+| Column | Source | Description |
+|:---|:---|:---|
+| `File` | inventory | Source file name |
+| `Unit` | inventory | Unit name |
+| `Type` | inventory | Unit type |
+| `Parent` | inventory | Parent unit or `GLOBAL` |
+| `LOC` | sloc | Physical line count |
+| `SLOC_physical` | sloc | LOC minus blanks and comments |
+| `SLOC_net` | sloc | Logical statements only |
+| `N_Comments` | sloc | Comment line count |
+| `N_Continuation` | sloc | Continuation line count |
+| `Pct_Comment` | sloc | Comment density % |
+| `CC` | complexity | McCabe cyclomatic complexity |
+| `CC_Level` | complexity | `LOW` / `MEDIUM` / `HIGH` / `CRITICAL` |
+| `CC_SLOC` | **derived** | `CC / SLOC_net` — complexity per logical statement |
+| `Fan_In` | impact | Number of callers |
+| `Fan_Out` | impact | Number of callees |
+| `Pct_Calc` | density | % calculation statements |
+| `Pct_Control` | density | % control-flow statements |
+| `Pct_IO` | density | % I/O statements |
+| `Pct_Legacy` | density | % legacy statements |
+| `N_Common_Blocks` | common_usage | Number of distinct COMMON blocks used |
+| `Common_Blocks` | common_usage | Semicolon-separated block names |
+| `Status` | reachability | `ENTRY_POINT` / `REACHABLE` / `UNREACHABLE` |
+| `Via_Entry_Points` | reachability | Entry points that reach this unit |
+| `N_Local_Vars` | symbol_variables | Count of declared variables (non-PARAMETER) |
+| `N_Params` | symbol_variables | Count of PARAMETER constants |
+| `N_Formal_Args` | symbol_signatures | Count of formal arguments (0 for non-callable units) |
+| `Implicit_None` | symbol_implicit | `YES` if unit has `IMPLICIT NONE`; `NO` if it has rules; empty if no IMPLICIT statement |
+| `N_Derived_Types` | type_definitions | Count of derived TYPE definitions hosted in this unit |
+| `Has_Equiv` | equivalences | `YES` if the unit has any EQUIVALENCE aliasing groups, `NO` otherwise |
+| `N_Equiv_Groups` | equivalences | Number of distinct aliasing groups in the unit |
+| `N_Data_Stmts` | audit CSVs | Count of DATA statements in the unit |
+| `N_Entry_Stmts` | audit CSVs | Count of ENTRY statements in the unit |
+| `Legacy_Flags` | inventory | Legacy constructs detected (from inventory) |
+| `IO_Flags` | inventory | I/O statements detected (from inventory) |
+
+<Note>
+`CC_SLOC = 0` when `SLOC_net = 0` to avoid division by zero. `N_Data_Stmts` and `N_Entry_Stmts` are computed by scanning `audit/*_DEBUG.csv` directly using scope resolution. If the `audit/` directory is missing, both columns default to 0.
+</Note>
+
+## visual_graph.py — Call Graph Visualization
+
+<Note>
+`visual_graph.py` is **step 17** of the pipeline.
+</Note>
+
+### Inputs
+
+- `<FORT_OUT>/dep_02_unit_graph.csv`
+- `<FORT_OUT>/report_consolidated.csv`
+
+### Outputs
+
+| File | Generated when |
+|:---|:---|
+| `graph_complete.dot` | No `--entry` flag (all nodes, all edges including USE) |
+| `graph_simple.dot` | No `--entry` flag (reachable nodes only, CALL + FUNC_CALL only) |
+| `graph_<names>.dot` | `--entry` specified — one file named after the selected entry points |
+
+### Visual Conventions
+
+<CardGroup cols={3}>
+  <Card title="Node Color (Reachability)">
+    Blue (`#4472C4`) = Entry point · Green (`#70AD47`) = Reachable · Grey (`#A6A6A6`) = Dead code · Yellow (`#FFD966`) = Reachable from multiple selected entry points
+  </Card>
+  <Card title="Node Shape (Unit Type)">
+    `doubleoctagon` = PROGRAM / IMPLICIT-MAIN · `hexagon` = MODULE · `ellipse` = FUNCTION · `diamond` = BLOCK_DATA · `box` = SUBROUTINE (default)
+  </Card>
+  <Card title="Edge Style (Dep Type)">
+    Solid black = CALL · Solid green = FUNC_CALL · Dashed blue = USE (module import)
+  </Card>
+</CardGroup>
+
+Node labels show: unit name, `CC=<value>`, `Fi=<Fan_In>` (when available). Nodes are grouped into **clusters by source file**.
+
+### CLI Flags
+
+<Warning>
+`visual_graph.py` accepts command-line arguments that are not yet supported through the `forti4d` CLI. Run it directly via `python -m forti4d.analyzers.visual_graph`. CLI integration is planned for a future release.
+</Warning>
+
+```bash
+# List available entry points
+python -m forti4d.analyzers.visual_graph --list
+
+# Full corpus graph
+python -m forti4d.analyzers.visual_graph
+
+# Subgraph for a single executable
+python -m forti4d.analyzers.visual_graph --entry mcdes
+
+# Subgraph for multiple executables (shared nodes highlighted yellow)
+python -m forti4d.analyzers.visual_graph --entry util0 util1 util2
+
+# Include USE (module import) edges — omitted by default
+python -m forti4d.analyzers.visual_graph --entry mcdes --use
+```
+
+### Rendering DOT Files
+
+Rendering `.dot` files to images requires [Graphviz](https://graphviz.org/):
+
+```bash
+dot -Tpng results/graph_mcdes.dot    -o results/graph_mcdes.png
+dot -Tsvg results/graph_complete.dot -o results/graph_complete.svg
+dot -Tpdf results/graph_simple.dot   -o results/graph_simple.pdf
+```
+
+## prioritization.py — Migration Risk Ranking
+
+<Note>
+`prioritization.py` is **step 18** of the pipeline.
+</Note>
+
+### Inputs
+
+- `<FORT_OUT>/report_consolidated.csv`
+- `<FORT_OUT>/report_clones.csv`
+- `<FORT_OUT>/report_migration_strategy.csv` (optional)
+
+### Output: `report_prioritization.csv`
+
+One row per program unit, sorted by priority tier then by score descending. Dead code units appear last.
+
+| Column | Description |
+|:---|:---|
+| `Priority` | `CRITICAL`, `HIGH`, `MEDIUM`, `LOW`, or `DEAD_CODE` |
+| `Score` | Composite score 0–100 |
+| `File` | Source file name |
+| `Unit` | Unit name |
+| `Type` | Unit type |
+| `CC` | McCabe cyclomatic complexity |
+| `Fan_In` | Number of units that call this one |
+| `Pct_Legacy` | Percentage of legacy statements |
+| `Reachability_Status` | `REACHABLE`, `UNREACHABLE`, or `ENTRY_POINT` |
+| `Clone_Status` | Worst clone state: `DIVERGED`, `SIMILAR`, `IDENTICAL`, or blank |
+| `Strategy` | Migration strategy recommendation |
+| `Implicit_None` | `YES` / `NO` / blank |
+| `Has_Equiv` | `YES` / `NO` — whether the unit has EQUIVALENCE aliasing |
+| `Score_CC` | CC component contribution (0–30) |
+| `Score_FanIn` | Fan-In component contribution (0–30) |
+| `Score_Legacy` | Legacy component contribution (0–20) |
+| `Score_Clon` | Clone component contribution (0–15) |
+| `Score_E4` | E4 Risk component contribution (0–5) |
+
+### Composite Risk Score
+
+**Score = (W_CC × CC_norm + W_FAN_IN × FanIn_norm + W_LEGACY × Legacy_norm + W_CLONE × Clone_norm + W_E4 × E4_norm) × 100**
+
+| Signal | Weight | Normalization |
+|:---|:---|:---|
+| Cyclomatic complexity | 30% | `min(CC / P95_CC, 1.0)` — 95th percentile among reachable units |
+| Fan-In criticality | 30% | `min(Fan_In / P95_FanIn, 1.0)` — 95th percentile among reachable units |
+| Legacy density | 20% | `Pct_Legacy / 100` |
+| Clone state | 15% | `1.0` if DIVERGED · `0.5` if SIMILAR · `0.25` if IDENTICAL · `0.0` if no clones |
+| E4 scope risk | 5% | `0.70` if no IMPLICIT NONE + `0.30` if has EQUIVALENCE (capped at 1.0) |
+
+The 95th percentile is used as the normalization reference (instead of the maximum) to prevent a single outlier from compressing the entire scale. Normalization is computed only over reachable units so that dead code does not skew the reference values.
+
+### Priority Tiers
+
+| Level | Score | Meaning |
+|:---|:---|:---|
+| `CRITICAL` | ≥ 40 | High complexity or criticality, requires early planning |
+| `HIGH` | ≥ 25 | Significant risk in at least one dimension |
+| `MEDIUM` | ≥ 12 | Moderate — plan but not urgent |
+| `LOW` | < 12 | Low risk, straightforward migration |
+| `DEAD_CODE` | — | `UNREACHABLE` — evaluate for deletion before migrating |
+
+## html_report.py — Self-Contained HTML Report
+
+<Note>
+`html_report.py` is **step 19** of the pipeline — the final step.
+</Note>
+
+### Input
+
+- `<FORT_OUT>/report_prioritization.csv`
+
+### Output: `report.html`
+
+A single self-contained HTML file with inline CSS and JavaScript. No external dependencies, no internet connection required.
+
+**Sections:**
+
+<Steps>
+  <Step title="Header">
+    Project title, generation date and time, total unit count.
+  </Step>
+  <Step title="Priority summary cards">
+    One card per tier (CRITICAL / HIGH / MEDIUM / LOW / DEAD_CODE / TOTAL) showing unit count and percentage. Tier colors: CRITICAL = red, HIGH = orange, MEDIUM = yellow, LOW = green, DEAD_CODE = grey.
+  </Step>
+  <Step title="Main table">
+    All units from `report_prioritization.csv` with color-coded `Priority` badges, filter buttons to show only one priority tier, and click-to-sort on every column header (numeric-aware, stable sort). Visible columns: Priority, Score, File, Unit, Type, CC, Fan-In, Pct_Legacy, Reachability, Strategy, Impl.None, Equiv.
+  </Step>
+</Steps>
+
+<Note>
+`html_report.py` uses the Python standard library only — no third-party packages required. The output file is fully standalone and can be shared or archived without any accompanying assets.
+</Note>

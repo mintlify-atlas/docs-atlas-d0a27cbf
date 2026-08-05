@@ -1,0 +1,81 @@
+---
+title: "reachability — Dead Code Detection from Entry Points"
+sidebarTitle: "Reachability"
+description: "reachability performs BFS from all PROGRAM and IMPLICIT-MAIN units to classify every program unit as ENTRY_POINT, REACHABLE, or NOT_REACHABLE (dead code)."
+---
+
+`reachability.py` detects dead code by traversing the resolved call graph from every known entry point. Starting from each `PROGRAM` and `IMPLICIT-MAIN` unit in the corpus, it performs a breadth-first search following `CALL`, `USE`, and `FUNC_CALL` edges, and classifies every program unit as an entry point itself, reachable from at least one entry point, or not reachable from any entry point. Units in the third category are dead code candidates — they exist in the source tree but are never called. `report_reachability.csv` is consumed by `consolidate.py` and can optionally be supplied to `cross_analysis.py` to force `ELIMINATE` as the migration strategy for confirmed dead units.
+
+<Note>
+`reachability.py` is **step 13** of the pipeline.
+</Note>
+
+<Tip>
+Run `reachability.py` before performing migration planning. Identifying dead code early prevents wasted effort analyzing units that should be deleted.
+</Tip>
+
+## Inputs
+
+- `<FORT_OUT>/dep_02_unit_graph.csv`
+- `<FORT_OUT>/inventory_report.csv`
+
+## Output: `report_reachability.csv`
+
+One row per program unit.
+
+| Column | Description |
+|:---|:---|
+| `File` | Source file name |
+| `Unit` | Unit name |
+| `Type` | Unit type |
+| `Parent` | Parent unit name, or `GLOBAL` |
+| `Status` | `ENTRY_POINT`, `REACHABLE`, or `UNREACHABLE` |
+| `Via_Entry_Points` | Semicolon-separated list of entry points that reach this unit |
+| `Reason` | Explanation when `Status = UNREACHABLE` |
+
+## Reachability States
+
+| State | Meaning |
+|:---|:---|
+| `ENTRY_POINT` | The unit is itself an entry point (PROGRAM or IMPLICIT-MAIN) |
+| `REACHABLE` | Reachable from at least one entry point via CALL, USE, or FUNC_CALL edges |
+| `UNREACHABLE` | Not reachable from any entry point — dead code candidate |
+
+## Algorithm
+
+<Steps>
+  <Step title="Identify entry points">
+    All units with type `PROGRAM` or `IMPLICIT-MAIN` in `inventory_report.csv` are designated as BFS roots and marked `ENTRY_POINT`.
+  </Step>
+  <Step title="Resolve MAIN__ nodes">
+    `dep_02_unit_graph.csv` stores IMPLICIT-MAIN origins as `MAIN__<filename>` (e.g. `MAIN__solver.f90`). These are resolved back to the inventory unit name using the `File` field of the inventory, so the output always shows the human-readable name.
+  </Step>
+  <Step title="BFS traversal">
+    From each entry point, the BFS follows all three edge types — `CALL`, `USE`, and `FUNC_CALL` — visiting every reachable unit. A unit inside a module is considered reachable if its parent module is reachable. A unit inside an entry point is considered reachable directly.
+  </Step>
+  <Step title="Classify remaining units">
+    Any unit not visited during the BFS is marked `UNREACHABLE`. The `Reason` column records a brief explanation.
+  </Step>
+</Steps>
+
+## Multi-Executable Corpora
+
+A corpus may contain several independent executables — one `PROGRAM` or `IMPLICIT-MAIN` unit per source file, all in the same directory. In this case `reachability.py` launches independent BFS roots from each entry point. A unit is classified as `REACHABLE` if reachable from *any* of them. The `Via_Entry_Points` column records which entry points reach each unit.
+
+## Impact on cross_analysis.py
+
+When `report_reachability.csv` is supplied to `cross_analysis.py` as an optional input, the strategy rule engine fires an additional rule before all others:
+
+> **Rule -1:** Units confirmed as `UNREACHABLE` always receive the `ELIMINATE` strategy, regardless of Fan-In, ICM, or IVC values.
+
+This override ensures that dead code is never inadvertently assigned a migration effort.
+
+## Notes
+
+<Note>
+`report_reachability.csv` is always written — even for pure library or module-only corpora with no entry points. In that case the file contains only headers. This is a valid outcome, not an error.
+</Note>
+
+<Note>
+`MAIN__<file>` naming convention: `dependencies.py` represents IMPLICIT-MAIN units as `MAIN__<filename>` in the call graph. `reachability.py` and `visual_graph.py` both resolve this back to the human-readable inventory unit name.
+</Note>

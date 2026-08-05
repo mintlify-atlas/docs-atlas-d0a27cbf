@@ -1,0 +1,107 @@
+{
+  "projectType": "cli-tool",
+  "projectName": "Forti4D",
+  "projectDescription": "A Python toolkit for static analysis of Fortran source code, implementing a 19-step pipeline that analyzes F77/F90/F95 corpora for structure, complexity, dead code, clone detection, and migration risk.",
+  "theme": "luma",
+  "primaryColor": "#0404f9",
+  "lightColor": "#0404a0",
+  "darkColor": "#3c7569",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "installation",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Concepts",
+            "pages": [
+              "concepts/mi4d-model",
+              "concepts/fortran-support",
+              "concepts/architecture"
+            ]
+          },
+          {
+            "group": "Using the CLI",
+            "pages": [
+              "cli/pipeline",
+              "cli/configuration",
+              "cli/library-api"
+            ]
+          },
+          {
+            "group": "Analyzer Reference",
+            "pages": [
+              "analyzers/inventory",
+              "analyzers/dependencies",
+              "analyzers/profiler-blocks",
+              "analyzers/structure-cross-analysis",
+              "analyzers/complexity-sloc-clones",
+              "analyzers/scope-manager",
+              "analyzers/reachability",
+              "analyzers/reporting"
+            ]
+          },
+          {
+            "group": "Outputs & Interpretation",
+            "pages": [
+              "outputs/output-files",
+              "outputs/interpretation",
+              "outputs/limitations"
+            ]
+          },
+          {
+            "group": "Development",
+            "pages": [
+              "development/contributing",
+              "development/changelog"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "19-step static analysis pipeline for Fortran F77/F90/F95 source code",
+    "No external parser required — custom logical-line reader handles hybrid corpora",
+    "McCabe cyclomatic complexity per program unit",
+    "Dead code detection via BFS reachability from entry points",
+    "Clone detection: identical, similar, and diverged duplicate unit pairs",
+    "Composite migration risk scoring and unit prioritization",
+    "COMMON block coupling analysis (F77)",
+    "E4 ScopeManager: variable declarations, derived types, EQUIVALENCE aliasing",
+    "Call graph visualization via Graphviz DOT files",
+    "Self-contained HTML report with filterable/sortable unit table",
+    "In-process Python library API (`forti4d.run_pipeline()`)",
+    "Opt-in per-file parallelism via `--workers N` / `FORT_WORKERS` env var",
+    "Structured logging via loguru with per-run log file"
+  ],
+  "publicApiSurface": [
+    "forti4d (CLI command)",
+    "forti4d.run_pipeline(source_dir, results_dir, *, from_step, only, skip, continue_on_error, workers, on_step_start, on_step_end)",
+    "forti4d.RunContext",
+    "forti4d.PipelineResult",
+    "forti4d.configure_logging()",
+    "forti4d.__version__",
+    "CLI flag: --project DIR",
+    "CLI flag: --output DIR",
+    "CLI flag: --list",
+    "CLI flag: --from STEP",
+    "CLI flag: --only STEP ...",
+    "CLI flag: --skip STEP ...",
+    "CLI flag: --continue-on-error",
+    "CLI flag: --quiet",
+    "CLI flag: --workers N",
+    "CLI flag: --log-file PATH",
+    "CLI flag: --no-log-file",
+    "Env var: FORT_SRC",
+    "Env var: FORT_OUT",
+    "Env var: FORT_WORKERS"
+  ]
+}

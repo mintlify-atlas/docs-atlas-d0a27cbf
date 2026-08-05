@@ -1,0 +1,189 @@
+---
+title: "E4 ScopeManager — Symbols, Derived Types, and EQUIVALENCE"
+sidebarTitle: "Scope Manager"
+description: "The E4 ScopeManager tier extracts symbol-level microstructure: variable declarations, derived TYPE definitions, IMPLICIT rules, and EQUIVALENCE aliasing groups."
+---
+
+The E4 ScopeManager is the symbol-level analysis layer of Forti4D, corresponding to Axis Z of the MI4D model. While the earlier pipeline tiers answer "what units exist and how they relate," E4 answers "what is *declared inside* each unit." The three scripts in this tier — `symbols.py`, `derived_types.py`, and `equivalences.py` — all read the `audit/*_DEBUG.csv` files produced by `profiler.py` and the inventory for scope resolution. Their outputs feed back into `cross_analysis.py` (E4 ICM penalty) and `consolidate.py` (E4 summary columns), and they are the basis for the Scope Health section of `PROJECT_SUMMARY.md`.
+
+<Tip>
+All three E4 scripts require `profiler.py` (audit CSVs) and `inventory.py` to have run first. They are steps 10, 11, and 12 of the pipeline.
+</Tip>
+
+## symbols.py — Variable Declarations and IMPLICIT Rules
+
+<Note>
+`symbols.py` is **step 10** of the pipeline.
+</Note>
+
+### Inputs
+
+- `<FORT_OUT>/audit/<filename>_DEBUG.csv` for each source file — reads lines classified as `VAR_DECLARATION`, `PARAMETER_STMT`, `IMPLICIT_STMT`, `COMMON_STMT`, `SUBROUTINE_UNIT`, or `FUNCTION_UNIT`
+- `<FORT_OUT>/inventory_report.csv`
+
+### Output Files
+
+**`symbol_variables.csv`** — one row per declared variable or PARAMETER constant.
+
+| Column | Description |
+|:---|:---|
+| `File` | Source file name |
+| `Unit` | Containing unit name |
+| `Unit_Type` | Unit type (SUBROUTINE, FUNCTION, PROGRAM, etc.) |
+| `Line` | Line number of the declaration |
+| `Var_Name` | Variable name (uppercase) |
+| `Fortran_Type` | Base type: `INTEGER`, `REAL`, `CHARACTER`, `TYPE`, etc. |
+| `Kind_Param` | KIND or byte-size modifier, e.g. `8`, `*4`, `*8` |
+| `Dimension` | Array dimension spec, e.g. `100` or `N,M` or `0:10`; empty if scalar |
+| `Attributes` | Pipe-separated attribute list, e.g. `INTENT(IN)\|DIMENSION(10)` |
+| `Intent` | `IN`, `OUT`, or `INOUT` if declared; empty otherwise |
+| `Initial_Value` | Compile-time value for PARAMETER constants; empty for regular vars |
+| `Is_Parameter` | `YES` if the variable is a PARAMETER constant, `NO` otherwise |
+| `In_Common` | COMMON block name if the variable appears in a COMMON statement; empty otherwise |
+| `Truncated` | `YES` if the source line was near the 120-character audit truncation limit |
+
+**`symbol_signatures.csv`** — one row per formal argument of each SUBROUTINE or FUNCTION. Units with no arguments produce no rows.
+
+| Column | Description |
+|:---|:---|
+| `File` | Source file name |
+| `Unit` | Subroutine or function name |
+| `Unit_Type` | `SUBROUTINE` or `FUNCTION` |
+| `Signature_Line` | Line number of the unit header |
+| `Position` | Argument position (1-based) |
+| `Arg_Name` | Formal argument name (uppercase) |
+| `Return_Type` | Declared return type for FUNCTION units (e.g. `REAL`, `REAL*8`); empty for SUBROUTINE |
+
+**`symbol_implicit.csv`** — one row per IMPLICIT statement found in each unit. This is the key input for measuring `IMPLICIT NONE` coverage across the corpus.
+
+| Column | Description |
+|:---|:---|
+| `File` | Source file name |
+| `Unit` | Unit name |
+| `Unit_Type` | Unit type |
+| `Line` | Line number of the IMPLICIT statement |
+| `Rule` | `NONE` for `IMPLICIT NONE`; otherwise the rule as written in source |
+| `Is_None` | `YES` if the statement is `IMPLICIT NONE`, `NO` otherwise |
+
+### COMMON Cross-Reference
+
+Variables that appear in a `COMMON` statement within the same unit have their `In_Common` field populated post-processing — after all lines of all files have been scanned. The blank (unnamed) COMMON is represented as `(BLANK)`, consistent with `common_blocks.py`.
+
+## derived_types.py — Derived TYPE Definitions
+
+<Note>
+`derived_types.py` is **step 11** of the pipeline.
+</Note>
+
+### Inputs
+
+- `<FORT_OUT>/audit/<filename>_DEBUG.csv` for each source file — reads lines classified as `TYPE_DEFINITION`, `VAR_DECLARATION`, or `END_BLOCK_STMT`
+- `<FORT_OUT>/inventory_report.csv`
+
+### Output Files
+
+**`type_definitions.csv`** — one row per derived TYPE definition found.
+
+| Column | Description |
+|:---|:---|
+| `File` | Source file name |
+| `Unit` | Name of the host unit (MODULE, SUBROUTINE, etc.) containing the TYPE |
+| `Unit_Type` | Host unit type (e.g. `MODULE`) |
+| `Start_Line` | Line number of the `TYPE name` statement |
+| `End_Line` | Line number of the matching `END TYPE` statement |
+| `Type_Name` | TYPE name (uppercase) |
+| `N_Components` | Number of component fields declared inside the TYPE |
+
+**`type_components.csv`** — one row per component field of each derived TYPE.
+
+| Column | Description |
+|:---|:---|
+| `File` | Source file name |
+| `Type_Name` | Parent TYPE name (uppercase) |
+| `Line` | Line number of the component declaration |
+| `Position` | Component position within the TYPE (1-based) |
+| `Comp_Name` | Component field name (uppercase) |
+| `Fortran_Type` | Base type: `INTEGER`, `REAL`, `LOGICAL`, `CHARACTER`, etc. |
+| `Kind_Param` | KIND or byte-size modifier, e.g. `*4`, `*8` |
+| `Dimension` | Array dimension spec if the component is an array; empty if scalar |
+| `Attributes` | Pipe-separated attribute list (e.g. `ALLOCATABLE`, `POINTER`) |
+
+### State Machine
+
+`derived_types.py` uses a per-file state machine to extract TYPE bodies:
+
+<Steps>
+  <Step title="Enter TYPE body">
+    A `TYPE_DEFINITION` line is detected. The type name and host unit are recorded via scope resolution.
+  </Step>
+  <Step title="Parse components">
+    While inside the TYPE body, every `VAR_DECLARATION` line is parsed as a component field using the same F77/F90 hybrid rules as `symbols.py`.
+  </Step>
+  <Step title="Close and emit">
+    An `END_BLOCK_STMT` matching `END TYPE` closes the TYPE body. All collected component rows are emitted.
+  </Step>
+</Steps>
+
+## equivalences.py — EQUIVALENCE Aliasing Groups
+
+<Note>
+`equivalences.py` is **step 12** of the pipeline.
+</Note>
+
+`EQUIVALENCE` statements cause two or more variables to share the same memory location — a legacy F77 construct that complicates static analysis, type inference, and safe refactoring. `equivalences.py` resolves transitive aliasing across multiple EQUIVALENCE statements using a union-find algorithm.
+
+### Inputs
+
+- `<FORT_OUT>/audit/<filename>_DEBUG.csv` for each source file — reads lines classified as `EQUIVALENCE_STMT`
+- `<FORT_OUT>/inventory_report.csv`
+
+### Output: `equivalences.csv`
+
+One row per variable per aliasing group.
+
+| Column | Description |
+|:---|:---|
+| `File` | Source file name |
+| `Unit` | Containing unit name |
+| `Unit_Type` | Unit type |
+| `Group_ID` | Sequential group identifier within the unit (1-based) |
+| `Position` | Position of this variable within the group (1-based, sorted alphabetically) |
+| `Var_Name` | Variable name (uppercase); array subscripts are stripped |
+| `N_Members` | Total number of variables in this aliasing group |
+| `Stmt_Lines` | Semicolon-separated line numbers of the EQUIVALENCE statements that define this group |
+
+### Union-Find Algorithm
+
+EQUIVALENCE aliasing is transitive: if `A` aliases `B` and `B` aliases `C` (across separate statements), then `A`, `B`, and `C` form a single group. The algorithm handles this correctly:
+
+```fortran
+EQUIVALENCE (A, B)   ! Group: {A, B}
+EQUIVALENCE (B, C)   ! Merges into: {A, B, C}
+```
+
+<Steps>
+  <Step title="Parse statements">
+    Each `EQUIVALENCE_STMT` line within a unit is parsed to extract its parenthesized variable lists.
+  </Step>
+  <Step title="Union variables">
+    All variables within each list are unioned into the same component.
+  </Step>
+  <Step title="Extract components">
+    After processing all statements in the unit, connected components are extracted.
+  </Step>
+  <Step title="Assign Group_IDs">
+    Sequential `Group_ID` values are assigned (sorted by first member name).
+  </Step>
+</Steps>
+
+<Note>
+Array subscripts in EQUIVALENCE references (e.g. `A(1)`) are stripped — only the variable name is recorded. Offset-based partial aliasing is not analyzed. Units with no EQUIVALENCE statements produce no rows.
+</Note>
+
+## E4 Data Flow
+
+E4 outputs feed back into two downstream scripts:
+
+- **`cross_analysis.py`** — when `symbol_implicit.csv` and/or `equivalences.csv` are present, adds up to 7 ICM penalty points for units without `IMPLICIT NONE` and/or with EQUIVALENCE aliasing groups.
+- **`consolidate.py`** — aggregates E4 data into summary columns (`N_Local_Vars`, `N_Params`, `N_Formal_Args`, `Implicit_None`, `N_Derived_Types`, `Has_Equiv`, `N_Equiv_Groups`) in `report_consolidated.csv`.
+- **`executive_summary.py`** — generates the optional Scope Health section of `PROJECT_SUMMARY.md` when at least one E4 source is present.

@@ -1,0 +1,90 @@
+---
+title: "inventory — Build the Fortran Unit Inventory"
+sidebarTitle: "Inventory"
+description: "inventory scans all Fortran source files and records every program unit's type, parent, line range, and legacy/IO audit flags into inventory_report.csv."
+---
+
+`inventory.py` is the foundation of the entire Forti4D pipeline. It scans every Fortran source file in your project directory, identifies each program unit — whether a subroutine buried inside a module or a bare executable file with no `PROGRAM` statement — and records its type, parent scope, physical line range, and any detected legacy or I/O constructs. Every other analyzer in the pipeline depends on `inventory_report.csv` being present and correct before it can run.
+
+<Note>
+`inventory.py` is **step 1** of the 19-step pipeline. All other scripts depend on its output.
+</Note>
+
+## Inputs and Outputs
+
+**Input:** Fortran source files in `FORT_SRC`. Processed extensions: `.f90`, `.f95`, `.f`, `.for`, `.f77`.
+
+**Output:** `<FORT_OUT>/inventory_report.csv` — one row per program unit found.
+
+## Output Column Reference
+
+| Column | Description |
+|:---|:---|
+| `File` | Source file name (basename only) |
+| `Type` | Unit type: `PROGRAM`, `IMPLICIT-MAIN`, `MODULE`, `SUBROUTINE`, `FUNCTION`, `BLOCK_DATA`, `GENERIC_INTERFACE` |
+| `Name` | Unit name as declared in source |
+| `Parent` | Name of the enclosing unit, or `GLOBAL` if top-level |
+| `Start_Line` | First physical line of the unit |
+| `End_Line` | Last physical line of the unit |
+| `Total_Lines` | `End_Line - Start_Line + 1` |
+| `Legacy` | Comma-separated list of legacy constructs found (COMMON, GOTO, EQUIVALENCE, etc.) |
+| `IO` | Comma-separated list of I/O statements found (OPEN, READ, WRITE, CLOSE, etc.) |
+| `Custom` | Reserved for additional audit flags |
+
+## Unit Types
+
+<CardGroup cols={2}>
+  <Card title="PROGRAM">
+    Explicit `PROGRAM` statement — a named program entry point.
+  </Card>
+  <Card title="IMPLICIT-MAIN">
+    A file that compiles to an executable with no `PROGRAM` statement. Detected when a file contains executable statements at the top level but no `PROGRAM` header.
+  </Card>
+  <Card title="MODULE">
+    An F90 `MODULE` block — may contain subroutines, functions, and interface definitions.
+  </Card>
+  <Card title="SUBROUTINE">
+    A `SUBROUTINE` definition, nested or top-level.
+  </Card>
+  <Card title="FUNCTION">
+    A `FUNCTION` definition, nested or top-level.
+  </Card>
+  <Card title="BLOCK_DATA">
+    An F77 `BLOCK DATA` unit — used to initialize named COMMON blocks.
+  </Card>
+  <Card title="GENERIC_INTERFACE">
+    An `INTERFACE` block inside a module. `End_Line` is set equal to `Start_Line` by design: interfaces are treated as point declarations, not containers.
+  </Card>
+</CardGroup>
+
+## Scope Resolution
+
+`inventory.py` uses a **stack-based scope resolver** to determine the parent of each unit:
+
+<Steps>
+  <Step title="Push on open">
+    When a unit-opening statement is matched (e.g. `SUBROUTINE`, `MODULE`, `FUNCTION`), a new scope entry is pushed onto the stack.
+  </Step>
+  <Step title="Record parent">
+    The innermost scope already on the stack at the time of the push becomes the `Parent` of the new unit.
+  </Step>
+  <Step title="Pop on close">
+    When the corresponding `END` statement is matched, that scope is popped from the stack.
+  </Step>
+</Steps>
+
+Top-level units (those with no enclosing scope when opened) receive `Parent = GLOBAL`.
+
+## Special Behaviors
+
+<Note>
+**`GENERIC_INTERFACE` line range:** `End_Line` is always set equal to `Start_Line`. Interface blocks are recorded as point declarations — their internal content is not scanned as a separate unit body.
+</Note>
+
+<Note>
+**`IMPLICIT-MAIN` detection:** A file is classified as `IMPLICIT-MAIN` when it contains executable statements at the top level but has no `PROGRAM` statement. `dependencies.py` represents these units as `MAIN__<filename>` nodes in the call graph.
+</Note>
+
+<Tip>
+Run `inventory.py` before any other analyzer. If `inventory_report.csv` is missing or stale, downstream scripts will either fail or produce incorrect results.
+</Tip>

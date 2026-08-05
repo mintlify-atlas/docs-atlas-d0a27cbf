@@ -1,0 +1,230 @@
+---
+title: "Forti4D Python Library API — run_pipeline()"
+sidebarTitle: "Library API"
+description: "Use forti4d as an in-process Python library. run_pipeline() runs all 19 analyzers without subprocess, returning results in memory via PipelineResult."
+---
+
+As of v0.8.0, Forti4D exposes a fully in-process Python library API for embedding Fortran static analysis directly into Python programs, notebooks, and CI scripts. Rather than shelling out to the `forti4d` command, you call `forti4d.run_pipeline()` from your own code. All 19 analyzers run inside the same process — no subprocesses, no temp files for inter-step communication — and results are returned in memory through a `PipelineResult` object. The CLI itself uses this exact API internally.
+
+## Public Exports
+
+The package exposes the following names via `__all__`:
+
+| Name | Kind | Description |
+|---|---|---|
+| `run_pipeline` | function | Run the full analysis pipeline in-process and return a `PipelineResult`. |
+| `RunContext` | dataclass | Mutable state threaded through a pipeline run. |
+| `PipelineResult` | dataclass | Return value of `run_pipeline()` — step outcomes and in-memory data. |
+| `configure_logging` | function | Opt in to console and/or file logging (silent by default in library mode). |
+| `__version__` | string | Current package version, e.g. `"0.8.0"`. |
+
+```python
+import forti4d
+
+print(forti4d.__version__)   # "0.8.0"
+```
+
+## run_pipeline()
+
+`run_pipeline()` is the primary entry point. It accepts the source and results directories plus optional keyword arguments for step filtering, error handling, parallelism, and progress callbacks.
+
+```python
+import forti4d
+
+result = forti4d.run_pipeline(
+    source_dir="/path/to/fortran",   # required — Fortran source directory
+    results_dir="results/",          # required — where output files are written
+    from_step=None,                  # resume from a specific step
+    only=None,                       # list of step names to run exclusively
+    skip=None,                       # list of step names to skip
+    continue_on_error=False,         # proceed past failures
+    workers=None,                    # parallelism; resolves via FORT_WORKERS env var
+    on_step_start=None,              # callback(name, description)
+    on_step_end=None,                # callback(name, success, elapsed, error)
+)
+```
+
+### Parameters
+
+<ParamField path="source_dir" type="str | Path" required>
+  Path to the directory containing the Fortran source files to analyze. Passed directly to each analyzer as `source_dir`. Converted to a `pathlib.Path` internally.
+</ParamField>
+
+<ParamField path="results_dir" type="str | Path" required>
+  Root directory where all output files are written. Created automatically (`parents=True, exist_ok=True`) before the first step runs. Converted to a `pathlib.Path` internally.
+</ParamField>
+
+<ParamField path="from_step" type="str | None" default="None">
+  Step name at which execution begins. All steps that appear before `from_step` in the pipeline are skipped. Must be a valid step name (see the [pipeline step table](/cli/pipeline#step-names)); raises `ValueError` if the name is not found.
+</ParamField>
+
+<ParamField path="only" type="list[str] | None" default="None">
+  If provided, only the steps listed here are executed. Steps run in their canonical pipeline order regardless of the order listed. All other steps are skipped.
+</ParamField>
+
+<ParamField path="skip" type="list[str] | None" default="None">
+  Step names to exclude from the run. Every other step executes normally. Can be combined with `from_step` — `from_step` is applied first, then `skip`.
+</ParamField>
+
+<ParamField path="continue_on_error" type="bool" default="False">
+  When `False` (default), the pipeline stops immediately after the first step that raises an exception or calls `sys.exit`. When `True`, execution continues to the next step and the failure is recorded in `PipelineResult.steps`.
+</ParamField>
+
+<ParamField path="workers" type="int | None" default="None">
+  Number of parallel worker processes for the steps that support per-file parallelism (`inventory`, `profiler`, and `blocks`). Resolution order: explicit argument → `FORT_WORKERS` environment variable → `1` (sequential). Values below `1` are clamped to `1`.
+</ParamField>
+
+<ParamField path="on_step_start" type="callable | None" default="None">
+  Optional callback invoked immediately before each step starts. Signature: `on_step_start(name: str, description: str)`. Useful for displaying progress in custom UIs or notebooks.
+</ParamField>
+
+<ParamField path="on_step_end" type="callable | None" default="None">
+  Optional callback invoked immediately after each step completes, whether or not it succeeded. Signature: `on_step_end(name: str, success: bool, elapsed: float, error: str)`. The `error` string is empty on success and contains a short `ExceptionType: message` representation on failure.
+</ParamField>
+
+### Return value
+
+`run_pipeline()` returns a `PipelineResult` instance.
+
+## PipelineResult
+
+`PipelineResult` is a dataclass holding the outcome of a completed (or partially completed) run.
+
+```python
+@dataclass
+class PipelineResult:
+    steps: list   # [(name, success, elapsed, error), ...]
+    data:  dict   # in-memory results of every step, keyed by output name
+```
+
+<ParamField path="steps" type="list[tuple]">
+  A list of `(name, success, elapsed, error)` tuples — one per step that was attempted. `name` is the step name string, `success` is a `bool`, `elapsed` is wall-clock time in seconds as a `float`, and `error` is an empty string on success or a short exception representation on failure.
+</ParamField>
+
+<ParamField path="data" type="dict">
+  In-memory results accumulated across all steps. Each step that returns a non-empty dict merges its output into this shared dictionary. Keys are output names — for example, `"report_prioritization"` holds the prioritization step's result. Access individual step outputs with `result.data["<output_name>"]`.
+</ParamField>
+
+### Inspecting results
+
+```python
+import forti4d
+
+result = forti4d.run_pipeline(
+    source_dir="/path/to/fortran",
+    results_dir="results/",
+)
+
+# Check overall success
+all_ok = all(success for _, success, _, _ in result.steps)
+
+# Print a timing summary
+for name, success, elapsed, error in result.steps:
+    status = "✓" if success else "✗"
+    print(f"  {status}  {name:<22}  {elapsed:.1f}s")
+
+# Access in-memory prioritization data
+prioritization = result.data.get("report_prioritization")
+```
+
+## RunContext
+
+`RunContext` is the mutable state dataclass threaded through every step during a pipeline run. It is created internally by `run_pipeline()` but is part of the public API so that advanced callers and custom step runners can type-annotate against it.
+
+```python
+@dataclass
+class RunContext:
+    source_dir:   Path
+    results_dir:  Path
+    data:         dict   # accumulated in-memory outputs (mutable)
+    workers:      int    # resolved worker count
+```
+
+<ParamField path="source_dir" type="Path">
+  Absolute path to the Fortran source directory, resolved from the `source_dir` argument passed to `run_pipeline()`.
+</ParamField>
+
+<ParamField path="results_dir" type="Path">
+  Absolute path to the output directory where all files are written.
+</ParamField>
+
+<ParamField path="data" type="dict">
+  Shared in-memory result store. Each step reads prior steps' outputs from this dict and writes its own outputs back into it. At the end of the run this dict is exposed as `PipelineResult.data`.
+</ParamField>
+
+<ParamField path="workers" type="int">
+  Resolved number of parallel workers, after applying the priority chain (explicit argument → `FORT_WORKERS` → `1`).
+</ParamField>
+
+## Logging
+
+By default, Forti4D is completely silent when used as a library. The `loguru` logger is disabled for the `forti4d` namespace at import time, so no output appears on the console and no log file is created unless you explicitly opt in.
+
+To enable logging, call `configure_logging()` before `run_pipeline()`:
+
+```python
+import forti4d
+
+# Enable console (INFO+) and file logging (DEBUG+)
+forti4d.configure_logging(results_dir="results/", quiet=False)
+
+result = forti4d.run_pipeline(
+    source_dir="/path/to/fortran",
+    results_dir="results/",
+)
+```
+
+Passing `quiet=True` raises the console threshold to `WARNING` while the log file still captures full `DEBUG`-level output — the same behavior as the `--quiet` CLI flag.
+
+## Progress Callbacks
+
+The `on_step_start` and `on_step_end` callbacks give you fine-grained visibility into pipeline progress without relying on log output. This is particularly useful in notebook environments or when building custom progress displays:
+
+```python
+import forti4d
+
+def on_start(name: str, description: str):
+    print(f"→ Starting: {name} — {description}")
+
+def on_end(name: str, success: bool, elapsed: float, error: str):
+    icon = "✓" if success else "✗"
+    print(f"  {icon} {name} ({elapsed:.1f}s)", end="")
+    if error:
+        print(f"  ERROR: {error}", end="")
+    print()
+
+result = forti4d.run_pipeline(
+    source_dir="/path/to/fortran",
+    results_dir="results/",
+    on_step_start=on_start,
+    on_step_end=on_end,
+)
+```
+
+## Accessing In-Memory Results
+
+Every step that produces structured output stores it in `RunContext.data` (and by extension `PipelineResult.data`) under a string key matching the output name. You can read any step's results directly from memory after the run completes, without parsing the CSV files on disk:
+
+```python
+import forti4d
+
+result = forti4d.run_pipeline(
+    source_dir="/path/to/fortran",
+    results_dir="results/",
+    only=["inventory", "complexity", "sloc", "consolidate", "prioritization"],
+)
+
+# Access the prioritization ranking in memory
+prioritization = result.data.get("report_prioritization")
+if prioritization is not None:
+    for row in prioritization[:5]:
+        print(row)
+```
+
+<Note>
+  Analyzer output files (CSV, DOT, HTML, etc.) are always written to disk regardless of whether you are using the library API or the CLI. The `data` dict provides the same structured data in memory as a convenience — it does not replace the on-disk files.
+</Note>
+
+<Warning>
+  The `on_step_end` callback signature changed in v0.8.0. The `output` parameter that appeared in earlier pre-release versions was removed. The current signature is `on_step_end(name: str, success: bool, elapsed: float, error: str)`. If you are upgrading from a pre-release version, update any callback implementations accordingly. See the CHANGELOG for details.
+</Warning>

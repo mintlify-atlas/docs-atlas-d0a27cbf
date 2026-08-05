@@ -1,0 +1,218 @@
+---
+title: "forti4d CLI — Pipeline Flags and Step Reference"
+sidebarTitle: "Pipeline CLI"
+description: "Complete reference for the forti4d command: all flags, step names, and usage patterns for controlling the 19-step Fortran static analysis pipeline."
+---
+
+The `forti4d` command runs a sequenced, 19-step static analysis pipeline against a Fortran source directory and writes all output files to a single results directory. Every step runs in dependency order — from building the unit inventory through complexity analysis, dead code detection, clone identification, and finally generating a self-contained HTML report. Flags let you control which steps run, how errors are handled, and how much output appears on the console.
+
+## Usage
+
+```bash
+forti4d [OPTIONS]
+```
+
+The following examples show typical invocations drawn directly from the pipeline:
+
+```bash
+# Run the full pipeline with default paths from config.py
+forti4d
+
+# Specify the source project and output directory
+forti4d --project ../myproject --output out/
+
+# Show all steps and the active FORT_SRC / FORT_OUT values, then exit
+forti4d --list
+
+# Resume the pipeline from a specific step
+forti4d --from complexity
+
+# Run only two selected steps
+forti4d --only sloc consolidate
+
+# Skip the DOT graph generation step
+forti4d --skip visual_graph
+
+# Continue past failures instead of stopping at the first one
+forti4d --continue-on-error
+
+# Suppress verbose log output on the console
+forti4d --quiet
+
+# Run inventory, profiler, and blocks in parallel with 4 workers
+forti4d --workers 4
+
+# Override the log file location
+forti4d --log-file /tmp/run.log
+
+# Disable the log file entirely (console output only)
+forti4d --no-log-file
+```
+
+## Flags
+
+<ParamField path="--project DIR" type="path">
+  Path to the Fortran source directory to analyze. Sets the `FORT_SRC` environment variable for the duration of the run. When omitted, the value of `FORT_SRC` in the shell environment is used, falling back to the `tests/fixtures/` default from `config.py`.
+</ParamField>
+
+<ParamField path="--output DIR" type="path">
+  Directory where all output files will be written (CSVs, audit files, DOT graphs, HTML report, log). Sets `FORT_OUT`. When omitted, falls back to the `FORT_OUT` environment variable and then to `results/`.
+</ParamField>
+
+<ParamField path="--list" type="flag">
+  Print the full step table alongside the active `FORT_SRC` and `FORT_OUT` values, then exit without running any analysis. Useful for verifying which project and output paths are active before a run.
+</ParamField>
+
+<ParamField path="--from STEP" type="string">
+  Skip every step that comes before `STEP` in the pipeline and begin execution at `STEP` (inclusive). All steps from `STEP` onward run in normal dependency order. Use `--list` to identify valid step names.
+</ParamField>
+
+<ParamField path="--only STEP ..." type="string[]">
+  Run only the steps listed (space-separated). All other steps are skipped. Steps are still executed in their canonical pipeline order regardless of the order they are listed on the command line.
+</ParamField>
+
+<ParamField path="--skip STEP ..." type="string[]">
+  Exclude the listed steps from the run. Every other step executes normally. Accepts one or more space-separated step names.
+</ParamField>
+
+<ParamField path="--continue-on-error" type="flag">
+  By default the pipeline halts as soon as any step fails. Pass this flag to proceed to the next step regardless of failures. All step outcomes are recorded in the final summary.
+</ParamField>
+
+<ParamField path="--quiet" type="flag">
+  Raises the console log threshold from `INFO` to `WARNING`, reducing terminal noise. Step progress headers and per-step ✓/✗ results are still printed. The log file always retains full `DEBUG`-level detail regardless of this flag.
+</ParamField>
+
+<ParamField path="--workers N" type="integer" default="1">
+  Number of parallel worker processes for the steps that support per-file parallelism: `inventory`, `profiler`, and `blocks`. Defaults to `1` (sequential). Can also be set via the `FORT_WORKERS` environment variable; explicit `--workers` takes precedence.
+</ParamField>
+
+<ParamField path="--log-file PATH" type="path">
+  Override the default log file location (`<output>/forti4d.log`). The parent directory must already exist. Ignored if `--no-log-file` is also passed.
+</ParamField>
+
+<ParamField path="--no-log-file" type="flag">
+  Disable the log file entirely. All `loguru` output is directed to the console only. Useful in CI pipelines where log file artifacts are not needed.
+</ParamField>
+
+## Step Names
+
+All 19 steps run in the dependency order shown below. Pass any `Name` to `--from`, `--only`, or `--skip`.
+
+| # | Name | Description |
+|---|------|-------------|
+| 1 | `inventory` | Build unit inventory from source files |
+| 2 | `dependencies` | Build call graph and compute Fan-In/Fan-Out |
+| 3 | `profiler` | Classify statements and produce `audit/` DEBUG files |
+| 4 | `blocks` | Block topology analysis (one file per source, to `output/blocks/`) |
+| 5 | `structure_analysis` | Classify files by architectural role |
+| 6 | `cross_analysis` | Assign migration strategy per unit |
+| 7 | `executive_summary` | Generate executive summary |
+| 8 | `complexity` | Compute McCabe cyclomatic complexity |
+| 9 | `common_blocks` | Detect COMMON block coupling |
+| 10 | `symbols` | Extract variable/parameter/implicit symbols per unit |
+| 11 | `derived_types` | Extract derived TYPE definitions and their components |
+| 12 | `equivalences` | Detect EQUIVALENCE aliasing groups (union-find) |
+| 13 | `reachability` | Dead code detection from entry points |
+| 14 | `sloc` | Precise SLOC count per unit |
+| 15 | `clones` | Detect identical/similar/diverged duplicate units |
+| 16 | `consolidate` | Join all reports into `report_consolidated.csv` |
+| 17 | `visual_graph` | Generate call graph DOT files |
+| 18 | `prioritization` | Compute composite risk score and rank units for migration |
+| 19 | `html_report` | Generate self-contained HTML report |
+
+<Note>
+  The `blocks` step has no single backing script. It batch-runs `block_analysis` once per `*_DEBUG.csv` file found in `<FORT_OUT>/audit/`. It requires the `profiler` step to have run first.
+</Note>
+
+## Step Selection
+
+Three flags let you narrow the set of steps that execute. They compose with each other: `--from` is applied first, `--only` second, and `--skip` last.
+
+<CodeGroup>
+
+```bash --from: resume from a step
+# Skip all steps before 'complexity' and run from there to the end
+forti4d --project ../myproject --output out/ --from complexity
+```
+
+```bash --only: run a subset
+# Run only SLOC counting and consolidation (in pipeline order)
+forti4d --project ../myproject --output out/ --only sloc consolidate
+```
+
+```bash --skip: exclude specific steps
+# Run everything except DOT graph generation
+forti4d --project ../myproject --output out/ --skip visual_graph
+
+# Skip multiple steps
+forti4d --project ../myproject --output out/ --skip visual_graph html_report
+```
+
+</CodeGroup>
+
+## Combining Flags
+
+All flags compose freely on a single command line:
+
+```bash
+forti4d --project ../myproject --output out/ --from complexity --quiet
+```
+
+This command points at `../myproject` as the source directory, writes results to `out/`, starts execution at the `complexity` step (skipping the eight earlier steps), and suppresses verbose console output. The log file at `out/forti4d.log` still records full `DEBUG`-level detail.
+
+Another common pattern during development is running a partial pipeline while keeping it resilient:
+
+```bash
+forti4d --project ../myproject --output out/ --skip visual_graph --continue-on-error --workers 4
+```
+
+## Terminal Output Format
+
+Each step produces a header block followed by a result line. In normal (non-`--quiet`) mode the output looks like:
+
+```
+=== Fortran Static Analysis Pipeline ===
+Project : ../myproject/
+Output  : results/
+Steps   : 19
+
+────────────────────────────────────────────────────────────
+[1/19] inventory  —  Build unit inventory from source files
+────────────────────────────────────────────────────────────
+
+  ✓ OK  2.3s
+
+────────────────────────────────────────────────────────────
+[2/19] dependencies  —  Build call graph and compute Fan-In/Fan-Out
+────────────────────────────────────────────────────────────
+
+  ✓ OK  8.7s
+...
+────────────────────────────────────────────────────────────
+Summary  —  45.1s total
+────────────────────────────────────────────────────────────
+  ✓  inventory              2.3s
+  ✓  dependencies           8.7s
+  ✓  profiler               5.1s
+  ...
+
+All 19 steps completed successfully.
+Full log: results/forti4d.log
+```
+
+With `--quiet`, the horizontal rule headers are suppressed and each step collapses to a single line showing the step name, ✓ or ✗, and elapsed time. The final summary table is always printed regardless of `--quiet`.
+
+When a step fails and `--continue-on-error` is not set, the pipeline prints a message and exits:
+
+```
+Pipeline stopped at 'complexity'. Use --continue-on-error to proceed past failures.
+```
+
+<Tip>
+  Pass `--workers 4` (or higher) to parallelize the `inventory`, `profiler`, and `blocks` steps on multi-core machines. These three steps perform independent per-file work and benefit most from parallelism on large Fortran corpora.
+</Tip>
+
+<Note>
+  The log file (`<output>/forti4d.log`) always captures full `DEBUG`-level detail regardless of the `--quiet` flag. `--quiet` only affects what appears on the console. Use `--log-file PATH` to write the log to a different location, or `--no-log-file` to disable it entirely.
+</Note>

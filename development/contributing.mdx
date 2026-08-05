@@ -1,0 +1,204 @@
+---
+title: "Contributing to Forti4D"
+sidebarTitle: "Contributing"
+description: "Set up the forti4d development environment, run the test suite with pytest, and follow the project's contribution guidelines."
+---
+
+Forti4D is an open-source Python toolkit for static analysis of Fortran source code. This guide is for developers who want to run, test, or contribute to forti4d from source — whether that means fixing a bug, adding a new analyzer, or improving test coverage against a Fortran corpus.
+
+## Prerequisites
+
+Before setting up the development environment, make sure you have the following installed:
+
+<CardGroup cols={3}>
+  <Card title="Python 3.8+" icon="python">
+    Required to run the forti4d package and test suite.
+  </Card>
+  <Card title="uv (recommended) or pip" icon="box">
+    [uv](https://docs.astral.sh/uv/) is recommended for fast, reproducible installs. Standard `pip` works too.
+  </Card>
+  <Card title="Graphviz (optional)" icon="diagram-project">
+    Only needed to render the `.dot` files produced by `visual_graph.py`. Not required to run the pipeline or tests.
+  </Card>
+</CardGroup>
+
+## Setup
+
+<Steps>
+  <Step title="Clone the repository">
+    ```bash
+    git clone https://github.com/acdeveloper-sci/forti4d.git
+    cd forti4d
+    ```
+  </Step>
+  <Step title="Install in editable mode with dev dependencies">
+    This installs the `forti4d` CLI command pointing to your local source, so any code changes take effect immediately without reinstalling.
+
+    <CodeGroup>
+      ```bash uv (recommended)
+      uv pip install -e ".[dev]"
+      ```
+      ```bash pip
+      pip install -e ".[dev]"
+      ```
+    </CodeGroup>
+  </Step>
+  <Step title="Verify the installation">
+    ```bash
+    forti4d --list
+    ```
+    This lists all 19 pipeline steps. If the command runs successfully, your development environment is ready.
+  </Step>
+</Steps>
+
+<Note>
+  The `forti4d` CLI entry point is configured in `pyproject.toml` under `[project.scripts]`: `forti4d = "forti4d.pipeline:main"`. The editable install wires this directly to your local checkout.
+</Note>
+
+## Running the Test Suite
+
+The test suite runs the full pipeline against a synthetic Fortran corpus in `tests/fixtures/` and validates all outputs. Tests generate output to `tests/results/` (git-ignored).
+
+```bash
+uv run pytest tests/ -q          # run all tests
+pytest                            # equivalent if forti4d is installed in the active env
+uv run pytest tests/test_inventory.py -v   # run a single module with verbose output
+```
+
+The `dev` optional dependency group (configured in `pyproject.toml`) includes `pytest>=7` — the only dev tool specified in the project build config.
+
+### Test categories
+
+<CardGroup cols={2}>
+  <Card title="Pipeline tests" icon="arrow-right-arrow-left">
+    End-to-end tests that run the full 19-step pipeline and check output file correctness.
+  </Card>
+  <Card title="Output manifest" icon="file-lines">
+    `tests/test_output_manifest.py` — byte-for-byte regression gate ensuring all expected output files are produced.
+  </Card>
+  <Card title="Library API" icon="code">
+    `tests/test_lib_pipeline.py` — verifies that `forti4d.run_pipeline()` produces the same results as the CLI.
+  </Card>
+  <Card title="Parallel tests" icon="bolt">
+    `tests/test_parallel_helper.py` and `tests/test_parallel_parity.py` — validate `pmap()` ordering guarantees and sequential/parallel output parity.
+  </Card>
+  <Card title="Logging tests" icon="scroll">
+    `tests/test_logging_setup.py` and `tests/test_logging_behavior.py` — verify `configure_logging()` behavior and end-to-end CLI/library logging.
+  </Card>
+  <Card title="Fixtures corpus" icon="database">
+    `tests/fixtures/` holds a synthetic Fortran corpus of 8 source files designed to exercise all pipeline paths.
+  </Card>
+</CardGroup>
+
+## Running Without Installing
+
+If you prefer not to install forti4d into your environment, you can invoke it directly through `uv run`:
+
+```bash
+uv run forti4d --project /path/to/fortran/source --output out/
+```
+
+You can also invoke the pipeline module directly with Python:
+
+```bash
+python -m forti4d.pipeline --project /path/to/fortran/source
+```
+
+## Development Workflow
+
+The editable install (`-e`) means any changes you make to Python files under `forti4d/` take effect the next time you invoke the `forti4d` command — no reinstall needed.
+
+<Tip>
+  Use `forti4d --from <step>` to resume the pipeline from a specific step during development. This saves time when iterating on a single analyzer without re-running the full pipeline from scratch.
+</Tip>
+
+The dev dependency group in `pyproject.toml` currently specifies only `pytest>=7`:
+
+```toml
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+```
+
+No linter, formatter, or type-checker is enforced at the project level — contributions are welcome to add them.
+
+## Project Structure
+
+```
+forti4d/                  ← Python package
+├── pipeline.py           ← CLI entry point (forti4d command)
+├── config.py             ← FORT_SRC / FORT_OUT env vars
+├── lib/                  ← shared libraries
+│   ├── reader_logical.py
+│   ├── patterns_v1.py
+│   ├── patterns_v2.py
+│   ├── kinds.py
+│   ├── parallel.py
+│   └── logging_setup.py
+├── analyzers/            ← 19 pipeline steps + support scripts
+└── doc/                  ← internal documentation
+    ├── architecture.md
+    ├── interpretation.md
+    ├── mi4d.md
+    └── scripts/          ← one .md per analyzer
+tests/
+├── conftest.py           ← session fixture: runs pipeline once
+├── fixtures/             ← synthetic Fortran corpus (8 files)
+├── results/              ← generated at test time (git-ignored)
+└── test_*.py             ← one module per analysis area
+pyproject.toml            ← build config, entry points, dependencies
+```
+
+<CardGroup cols={2}>
+  <Card title="forti4d/analyzers/" icon="gear">
+    The 19 pipeline scripts, each implementing an `analyze_xxx()` / `write_xxx()` / `main()` contract.
+  </Card>
+  <Card title="forti4d/lib/" icon="book">
+    Support libraries: `reader_logical`, `patterns_v1`/`v2`, `kinds`, `parallel`, and `logging_setup`.
+  </Card>
+  <Card title="forti4d/doc/" icon="file-text">
+    Internal documentation: `architecture.md`, `interpretation.md`, `mi4d.md`, and one `.md` per analyzer under `scripts/`.
+  </Card>
+  <Card title="tests/" icon="flask">
+    The pytest suite. `conftest.py` runs the pipeline once per session as a shared fixture; individual test modules cover specific analysis areas.
+  </Card>
+</CardGroup>
+
+## Commit Conventions
+
+Follow this commit message format:
+
+```
+<scope>: <short description>
+```
+
+Examples from the project history:
+
+```
+fix: inventory — closed_unit.type attribute error
+feat: reachability — add ENTRY_POINT status
+translate: complete English translation Nivel 3a+3b+3c
+docs: update README with Known Limitations and Future Work
+chore: bump version to 0.7.0
+```
+
+## Branch Conventions
+
+<CardGroup cols={2}>
+  <Card title="main" icon="tag">
+    Stable, tagged releases. Only merge here with `--no-ff` from `dev`.
+  </Card>
+  <Card title="dev" icon="code-branch">
+    Active development branch. All feature work and fixes land here first.
+  </Card>
+</CardGroup>
+
+## Environment Variables
+
+Two environment variables control default paths for both the CLI and the test suite:
+
+| Variable    | Default           | Description                      |
+| :---------- | :---------------- | :------------------------------- |
+| `FORT_SRC`  | `tests/fixtures/` | Path to Fortran source directory |
+| `FORT_OUT`  | `results/`        | Path to output directory         |
+
+These are read by `forti4d/config.py` and can be overridden on the command line with `--project` and `--output` respectively.

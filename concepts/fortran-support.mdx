@@ -1,0 +1,104 @@
+---
+title: "Fortran Standard Support in Forti4D"
+sidebarTitle: "Fortran Support"
+description: "Forti4D fully supports FORTRAN 77, Fortran 90, and Fortran 95. Learn what constructs are analyzed and what limitations apply to hybrid codebases."
+---
+
+Real-world scientific and engineering Fortran corpora rarely conform to a single standard. A single repository might contain F77 subroutines written in the 1980s, F90 modules added in the 2000s, and F95 array constructs introduced during later refactoring — all compiled together without issue by a modern Fortran compiler. General-purpose Fortran parsers are typically calibrated for clean, standard-conforming source and struggle with this kind of heterogeneous input. Forti4D is designed from the ground up to handle these hybrid codebases: its logical-line reader and regex-based classification engine are calibrated for mixed-standard real-world source, not for idealized textbook programs.
+
+## Standard Support Summary
+
+| Standard | Support |
+| :--- | :--- |
+| FORTRAN 77 (F77) | Full — fixed-form, COMMON, EQUIVALENCE, IMPLICIT, BLOCK DATA |
+| Fortran 90 (F90) | Full — free-form, modules, USE, derived types, INTERFACE blocks |
+| Fortran 95 (F95) | Full — FORALL, WHERE, PURE/ELEMENTAL attributes |
+| Fortran 2003+ | Not supported (see limitations below) |
+
+## What Forti4D Handles Per Standard
+
+<Tabs>
+  <Tab title="FORTRAN 77">
+    Forti4D provides complete analysis coverage for the F77 feature set most commonly found in legacy scientific and engineering codebases:
+
+    - **Fixed-form source layout** — columns 1–5 (labels), column 6 (continuation), columns 7–72 (statements), columns 73+ (sequence numbers ignored)
+    - **`COMMON` blocks** — named and blank COMMON are detected, parsed, and cross-referenced across units by `common_blocks.py`; coupling risk (LOW / MEDIUM / HIGH) is assigned based on how many units share each block
+    - **`EQUIVALENCE`** — aliasing groups are resolved using a union-find algorithm by `equivalences.py`; transitive aliasing across multiple EQUIVALENCE statements within the same unit is handled correctly
+    - **`IMPLICIT` typing** — IMPLICIT rules per unit are extracted by `symbols.py`; units missing `IMPLICIT NONE` are flagged in `symbol_implicit.csv` and penalized in the migration strategy score
+    - **`BLOCK DATA`** — recognized as a program unit type in the inventory with correct line range attribution
+    - **`GOTO` and labeled `DO` loops** — classified as legacy control-flow constructs in `profiler.py`; their density is reported in `report_density.csv` and contributes to the migration complexity index (ICM) in `cross_analysis.py`
+  </Tab>
+  <Tab title="Fortran 90">
+    All F90 structural and modular features are recognized and analyzed:
+
+    - **Free-form source layout** — no column restrictions; `&` at end-of-line (or start-of-continuation) is handled by `reader_logical.py`
+    - **`MODULE` program units** — inventoried as first-class units; their `USE` relationships are resolved and recorded in the call graph by `dependencies.py`
+    - **`USE` associations** — tracked as edges in `dep_02_unit_graph.csv`; modules that are referenced but not defined in the corpus are recorded as external orphans
+    - **Derived `TYPE` definitions** — extracted by `derived_types.py` into `type_definitions.csv` and `type_components.csv`; host unit is resolved via scope (line range) lookup
+    - **`INTERFACE` blocks** — recognized and classified in statement profiling; used to detect explicit calling conventions
+    - **`CONTAINS` sections** — the Containment Zone of a program unit; contained procedures are inventoried as child units with their own line ranges, enabling correct scope resolution for all inner metrics
+  </Tab>
+  <Tab title="Fortran 95">
+    F95 additions are recognized for statement classification and complexity analysis:
+
+    - **`FORALL` construct** — counted as a decision point in `complexity.py` for McCabe cyclomatic complexity; classified as a calculation/array statement in `profiler.py`
+    - **`WHERE` construct** — counted as a decision point in `complexity.py`; classified as a calculation/array statement in `profiler.py`
+    - **`PURE` and `ELEMENTAL` attributes** — recognized as procedure attributes in symbol extraction and inventory; units carrying these attributes are visible in `symbol_signatures.csv`
+  </Tab>
+</Tabs>
+
+## The Logical-Line Reader
+
+The core of Forti4D's format handling is `reader_logical.py`. Every analysis script that reads Fortran source — `inventory.py`, `profiler.py`, and `sloc.py` — uses this shared reader rather than operating on raw physical lines. It returns a list of `LogicalLine` objects, each of which carries the merged content of all physical lines that form a single logical statement, together with the complete list of source line numbers involved (the Traceability Map entry for that statement).
+
+The reader handles the following in a single pass:
+
+<Accordion title="F77 fixed-form continuation (column 6)">
+  A non-blank, non-zero character in column 6 of any line marks it as a continuation of the previous logical line. `reader_logical.py` merges all continuation lines into a single `LogicalLine` object and records the full set of physical line numbers that compose it.
+</Accordion>
+
+<Accordion title="F90 free-form continuation (&)">
+  An `&` at the end of a line (possibly followed by whitespace) indicates that the logical statement continues on the next physical line. An optional `&` at the start of the next line (used for token-boundary continuation) is also handled and stripped before merging.
+</Accordion>
+
+<Accordion title="Comments (!, C/c/*, and blank lines)">
+  - **F90-style inline comments:** anything from `!` to the end of the line is stripped before classification.
+  - **F77-style full-line comments:** lines with `C`, `c`, or `*` in column 1 are recognized as comment lines.
+  - **Blank lines:** detected and classified as BLANK in `sloc.py`'s line accounting.
+</Accordion>
+
+<Accordion title="Content-based format detection">
+  Format detection is **content-based**, not extension-based. The reader examines the structure of each line to determine whether it follows fixed-form or free-form conventions. A `.F` file written in free-form style is processed correctly; a `.f90` file containing legacy fixed-form blocks is likewise handled. This makes the reader robust on corpora where file extensions do not reliably indicate the format in use.
+</Accordion>
+
+<Note>
+  Because format detection is content-based rather than extension-based, files with non-standard extensions (such as `.F` for free-form source) are handled correctly without any configuration. The reader infers the layout from the content itself.
+</Note>
+
+## C Preprocessor Directives
+
+Many scientific Fortran codebases use the C preprocessor (`cpp`) for conditional compilation, macro expansion, and file inclusion. Forti4D does **not** invoke or emulate a preprocessor. Directives are handled as follows:
+
+| Directive type | Forti4D behaviour |
+| :--- | :--- |
+| `#ifdef`, `#ifndef`, `#else`, `#endif` | Passed through as unrecognized physical lines; the conditional block is always parsed as if present |
+| `#define` | Never expanded; macro-expanded identifiers and type aliases are not recognized by the analysis |
+| `#include` (cpp) | Not followed; the included file is not read or analyzed |
+| Native Fortran `INCLUDE` | Tracked and cross-referenced in `dep_06_include_files.csv` |
+
+**Practical consequences for conditional compilation:** A `USE` or `CALL` inside an `#ifdef … #endif` block will appear in the dependency graph regardless of which compilation flags would be active in a real build. The analysis reflects the literal source as written, not any particular preprocessed configuration.
+
+## INCLUDE Files
+
+Native Fortran `INCLUDE` statements are detected by `dependencies.py` and recorded in `dep_06_include_files.csv`, which reports each include reference along with an existence flag (whether the file was found on the configured source path). Include files are tracked and cross-referenced as part of the physical file map, but they are not recursively analyzed as independent program units — symbols and statements inside an included file are attributed to the host unit that contains the `INCLUDE` statement.
+
+<Warning>
+  Fortran 2003+ object-oriented features are not detected or analyzed. This includes:
+  - `CLASS` declarations and polymorphic variables
+  - `TYPE … EXTENDS(…)` inheritance hierarchies
+  - Procedure pointers and abstract interfaces
+  - `BIND(C)` interoperability attributes
+  - Deferred-length character strings (`CHARACTER(LEN=:)`)
+
+  Units that use these features will be inventoried and their line ranges recorded, but the 2003+ constructs themselves will not be classified or appear in symbol, type, or dependency outputs. See the Future Work section of the README for the planned 2003/2008/2018 roadmap.
+</Warning>

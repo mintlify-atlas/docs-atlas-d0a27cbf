@@ -1,0 +1,128 @@
+---
+title: "Install Forti4D — pip, uv, and from source"
+sidebarTitle: "Installation"
+description: "Install forti4d with pip or uv, verify with forti4d --list, and optionally install Graphviz for call graph rendering."
+---
+
+Forti4D is a pure-Python package with a single third-party dependency ([loguru](https://github.com/Delgan/loguru)), so installation is straightforward on any platform. The sections below cover the standard package install, a source install for contributors, and the optional Graphviz setup needed for call graph rendering.
+
+## Requirements
+
+- **Python 3.8 or later** — Forti4D is tested on Python 3.8+ on Windows, Linux, and macOS.
+- **[Graphviz](https://graphviz.org/)** — optional; only required if you want to render the `.dot` files produced by the `visual_graph` pipeline step into images (PNG, SVG, PDF).
+
+<Note>
+  **loguru** is the only third-party Python dependency. It is declared in Forti4D's package metadata and is installed automatically — you do not need to install it separately.
+</Note>
+
+## Install from PyPI
+
+<CodeGroup>
+```bash pip
+pip install forti4d
+```
+
+```bash uv
+uv pip install forti4d
+```
+</CodeGroup>
+
+Both commands install the `forti4d` CLI command and the `forti4d` Python package.
+
+## Verify the Installation
+
+After installing, run `forti4d --list` to confirm the CLI is working and to see all 19 pipeline steps:
+
+```bash
+forti4d --list
+```
+
+Expected output:
+
+```
+Step                   Module                                 Description
+──────────────────────────────────────────────────────────────────────────────────────────
+  inventory            forti4d.analyzers.inventory            Build unit inventory from source files
+  dependencies         forti4d.analyzers.dependencies         Build call graph and compute Fan-In/Fan-Out
+  profiler             forti4d.analyzers.profiler             Classify statements and produce audit/ DEBUG files
+  blocks               block_analysis (in-process, batch)     Block topology analysis (one file per source, to output/)
+  structure_analysis   forti4d.analyzers.structure_analysis   Classify files by architectural role
+  cross_analysis       forti4d.analyzers.cross_analysis       Assign migration strategy per unit
+  executive_summary    forti4d.analyzers.executive_summary    Generate executive summary
+  complexity           forti4d.analyzers.complexity           Compute McCabe cyclomatic complexity
+  common_blocks        forti4d.analyzers.common_blocks        Detect COMMON block coupling
+  symbols              forti4d.analyzers.symbols              Extract variable/parameter/implicit symbols per unit
+  derived_types        forti4d.analyzers.derived_types        Extract derived TYPE definitions and their components
+  equivalences         forti4d.analyzers.equivalences         Detect EQUIVALENCE aliasing groups (union-find)
+  reachability         forti4d.analyzers.reachability         Dead code detection from entry points
+  sloc                 forti4d.analyzers.sloc                 Precise SLOC count per unit
+  clones               forti4d.analyzers.clones               Detect identical/similar/diverged duplicate units
+  consolidate          forti4d.analyzers.consolidate          Join all reports into report_consolidated.csv
+  visual_graph         forti4d.analyzers.visual_graph         Generate call graph DOT files
+  prioritization       forti4d.analyzers.prioritization       Compute composite risk score and rank units for migration
+  html_report          forti4d.analyzers.html_report          Generate self-contained HTML report
+
+  FORT_SRC  →  tests/fixtures/
+  FORT_OUT  →  results/
+```
+
+`--list` also prints the active `FORT_SRC` and `FORT_OUT` values so you can confirm your environment is configured correctly before running a full analysis.
+
+## Install from Source (Contributors)
+
+If you want to contribute to Forti4D or run the test suite, install in editable mode with the `dev` extras. Start by cloning the repository:
+
+```bash
+git clone https://github.com/acdeveloper-sci/forti4d.git
+cd forti4d
+```
+
+Then install in editable mode:
+
+<CodeGroup>
+```bash uv (recommended)
+uv pip install -e ".[dev]"
+```
+
+```bash pip
+pip install -e ".[dev]"
+```
+</CodeGroup>
+
+Editable mode means that any changes you make to the source files take effect immediately — no reinstall required. The `dev` extra installs `pytest>=7` for running the test suite.
+
+You can also run the pipeline without installing at all:
+
+```bash
+# with uv
+uv run forti4d --project /path/to/fortran/source --output out/
+
+# with Python directly
+python -m forti4d.pipeline --project /path/to/fortran/source --output out/
+```
+
+## Graphviz (Optional)
+
+Graphviz is only needed if you want to convert the `.dot` files produced by the `visual_graph` step into rendered images. If you skip this, `visual_graph` still runs and writes `.dot` files — you simply cannot render them locally without Graphviz installed.
+
+<Tabs>
+  <Tab title="macOS">
+    ```bash
+    brew install graphviz
+    ```
+  </Tab>
+  <Tab title="Ubuntu / Debian">
+    ```bash
+    sudo apt-get install graphviz
+    ```
+  </Tab>
+  <Tab title="Windows">
+    Download and run the installer from [graphviz.org/download](https://graphviz.org/download/), then ensure the `bin/` directory is on your `PATH`.
+  </Tab>
+</Tabs>
+
+After installing, verify Graphviz is on your `PATH`:
+
+```bash
+dot -V
+```

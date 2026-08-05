@@ -1,0 +1,100 @@
+---
+title: "dependencies — Build the Fortran Call Graph"
+sidebarTitle: "Dependencies"
+description: "dependencies resolves CALL, USE, and function-call references into a call graph, computes Fan-In and Fan-Out per unit, and produces seven dep_*.csv output files."
+---
+
+`dependencies.py` is step 2 of the pipeline. It reads the unit inventory and all Fortran source files to resolve every `CALL`, `USE`, and inline function-call reference into a directed edge in the corpus call graph. The result is seven output files covering the full spectrum of dependency information: raw relationships, resolved graph edges, per-unit coupling metrics, ambiguous definitions, external orphans, file-level summaries, and INCLUDE cross-references. All seven files are always written — even when empty — so downstream scripts can reliably distinguish "no data" from "step never ran."
+
+<Note>
+`dependencies.py` is **step 2** of the pipeline. It requires `inventory_report.csv` from step 1.
+</Note>
+
+## Inputs
+
+- `<FORT_OUT>/inventory_report.csv`
+- Fortran source files in `FORT_SRC`
+
+## Output Files
+
+### `dep_00_ambiguities.csv`
+
+Units with the same name defined in more than one source file. Always written (headers only if no ambiguities exist).
+
+| Column | Description |
+|:---|:---|
+| `Unit_Name` | Unit name |
+| `Type` | Unit type |
+| `Count` | Number of files where this name is defined |
+| `File_List` | Semicolon-separated list of those files |
+
+### `dep_01_master_data.csv`
+
+All detected call/use relationships before resolution. Always written (headers only when no dependencies are found).
+
+### `dep_02_unit_graph.csv`
+
+The resolved call graph — one row per directed edge. Edge types are `CALL`, `USE`, and `FUNC_CALL`. Always written (headers only when no resolved edges exist, e.g. a pure library corpus with no cross-file dependencies).
+
+| Column | Description |
+|:---|:---|
+| `Source_Unit` | Calling unit. IMPLICIT-MAIN units appear as `MAIN__<filename>` |
+| `Source_Type` | Type of the calling unit |
+| `Target_Unit` | Called or used unit |
+| `Target_Type` | Type of the called unit |
+| `Dep_Type` | Edge type: `CALL`, `USE`, or `FUNC_CALL` |
+| `Target_File` | Source file(s) of the destination unit |
+| `Weight` | Number of times this dependency appears in the calling unit |
+
+### `dep_03_impact_matrix.csv`
+
+Fan-In and Fan-Out per unit. Always written (headers only when no resolved dependencies exist).
+
+| Column | Description |
+|:---|:---|
+| `Unit` | Unit name |
+| `Type` | Unit type |
+| `File` | Source file |
+| `Fan_In` | Number of units that call or use this unit |
+| `Fan_Out` | Number of distinct units this unit calls or uses |
+
+### `dep_04_external_orphans.csv`
+
+References found in source code with no matching definition in the corpus — external library calls, unresolved symbols. Always written (headers only when all references are resolved internally).
+
+### `dep_05_file_dependencies.csv`
+
+Aggregated dependency summary at the file level. Always written (headers only when all units reside in a single file or have no cross-file dependencies).
+
+### `dep_06_include_files.csv`
+
+Explicit Fortran `INCLUDE` file references — one row per unique `(Source_File, Source_Unit, Included_File)` triple. Duplicate references from the same triple at different lines are deduplicated. Always written (headers only when no `INCLUDE` directives are found).
+
+| Column | Description |
+|:---|:---|
+| `Source_File` | Source file containing the `INCLUDE` statement |
+| `Source_Unit` | Unit (scope) in which the `INCLUDE` appears |
+| `Included_File` | Filename referenced by the `INCLUDE` directive |
+| `Status` | `PRESENT` if the file exists in `FORT_SRC`; `MISSING` otherwise |
+
+## Edge Types
+
+| Edge Type | Triggered by |
+|:---|:---|
+| `CALL` | `CALL subroutine_name(...)` statement |
+| `USE` | `USE module_name` statement |
+| `FUNC_CALL` | Inline function call within an expression |
+
+## Notes
+
+<Note>
+**`MAIN__<file>` naming convention:** `dependencies.py` represents IMPLICIT-MAIN entry points as `MAIN__<filename>` (e.g. `MAIN__solver.f90`) in `dep_02_unit_graph.csv`. `reachability.py` and `visual_graph.py` resolve this convention back to the inventory unit name for display.
+</Note>
+
+<Note>
+**Ambiguous targets:** When a called name matches multiple definitions in `dep_00_ambiguities.csv`, the edge in `dep_02_unit_graph.csv` may point to multiple candidate files (semicolon-separated in the `Target_File` column).
+</Note>
+
+<Tip>
+All seven `dep_*.csv` files are always written — even when they contain only headers. This guarantees that downstream scripts can tell the difference between "dependencies ran and found nothing" and "dependencies never ran."
+</Tip>

@@ -1,47 +1,188 @@
 ---
-title: "Quickstart"
-description: "Begin with a guide on the fastest path to a successful outcome"
+title: "Get started with Forti4D in 5 minutes"
+sidebarTitle: "Quickstart"
+description: "Run forti4d against a Fortran project, explore the 19-step pipeline output, and open the interactive HTML report in under 5 minutes."
 ---
 
-Describe how someone begins using your product. What is the first thing they need to do? Are there any prerequisites?
-
-A quickstart should take someone from zero to using your product. They'll get a quick win and a sense of what they can accomplish.
-
-## Prerequisites
-
-Before you begin, you must have:
-
-- Requirement one (for example, Node.js 18+, a free account, an API key)
-- Requirement two (for example, a compatible device, a compatible browser, a compatible operating system)
-
-## Get started
+Forti4D analyses a directory of Fortran source files and writes a structured set of CSV reports, a Markdown executive summary, optional call graph DOT files, and a self-contained interactive HTML report — all in a single command. This guide walks you through your first run from install to opening the report in a browser.
 
 <Steps>
-  <Step title="Install">
-    Describe how to install your product or sign up.
+  <Step title="Install Forti4D">
+    Install the package from PyPI with pip or uv:
 
     ```bash
-    npm install your-package
+    pip install forti4d
+    ```
+
+    Verify the install by listing the pipeline steps:
+
+    ```bash
+    forti4d --list
+    ```
+
+    You should see all 19 steps printed to the terminal along with the active `FORT_SRC` and `FORT_OUT` paths.
+  </Step>
+
+  <Step title="Run the full pipeline">
+    Point `--project` at the root of your Fortran source tree and `--output` at the directory where you want results written:
+
+    ```bash
+    forti4d --project /path/to/fortran/source --output results/
+    ```
+
+    The pipeline runs all 19 steps in dependency order. Each step prints its name, description, a pass/fail indicator, and elapsed time:
+
+    ```
+    === Fortran Static Analysis Pipeline ===
+    Project : /path/to/fortran/source
+    Output  : results/
+    Steps   : 19
+
+    ────────────────────────────────────────────────────────────
+    [1/19] inventory  —  Build unit inventory from source files
+    ────────────────────────────────────────────────────────────
+
+      ✓ OK  2.3s
+
+    ────────────────────────────────────────────────────────────
+    [2/19] dependencies  —  Build call graph and compute Fan-In/Fan-Out
+    ────────────────────────────────────────────────────────────
+
+      ✓ OK  8.7s
+
+    ...
+    ```
+
+    When all steps finish, a summary table is printed:
+
+    ```
+    ────────────────────────────────────────────────────────────
+    Summary  —  45.1s total
+    ────────────────────────────────────────────────────────────
+      ✓  inventory              2.3s
+      ✓  dependencies           8.7s
+      ✓  profiler               5.1s
+      ✓  blocks                 3.4s
+      ✓  structure_analysis     0.8s
+      ✓  cross_analysis         0.9s
+      ✓  executive_summary      0.5s
+      ✓  complexity             1.2s
+      ✓  common_blocks          0.7s
+      ✓  symbols                2.1s
+      ✓  derived_types          0.4s
+      ✓  equivalences           0.3s
+      ✓  reachability           1.5s
+      ✓  sloc                   1.1s
+      ✓  clones                 4.6s
+      ✓  consolidate            0.6s
+      ✓  visual_graph           1.8s
+      ✓  prioritization         0.5s
+      ✓  html_report            0.9s
+
+    All 19 steps completed successfully.
+    Full log: results/forti4d.log
     ```
   </Step>
-  <Step title="Configure">
-    Describe any setup or configuration needed before first use.
 
-    ```bash
-    your-cli init
-    ```
+  <Step title="Explore the output files">
+    The `results/` directory now contains the full analysis. Key files to look at first:
+
+    | File | Description |
+    | :--- | :--- |
+    | `report.html` | Self-contained HTML report — filterable and sortable unit table |
+    | `PROJECT_SUMMARY.md` | Executive summary in Markdown |
+    | `report_prioritization.csv` | Units ranked by composite migration risk score |
+    | `report_consolidated.csv` | All metrics joined — one row per unit |
+    | `report_reachability.csv` | Dead code detection — units unreachable from any entry point |
+    | `report_complexity.csv` | McCabe cyclomatic complexity per unit |
+    | `report_clones.csv` | Identical, similar, and diverged duplicate unit pairs |
+    | `dep_02_unit_graph.csv` | Resolved call graph (CALL, USE, FUNC\_CALL edges) |
+    | `dep_03_impact_matrix.csv` | Fan-In and Fan-Out per unit |
+    | `graph_*.dot` | Graphviz call graphs (full, simplified, and per entry point) |
   </Step>
-  <Step title="Run it">
-    Show the first thing a user does to see it working.
+
+  <Step title="Open the HTML report">
+    Open `results/report.html` directly in any browser — no server required:
 
     ```bash
-    your-cli start
+    # macOS
+    open results/report.html
+
+    # Linux
+    xdg-open results/report.html
+
+    # Windows (PowerShell)
+    Start-Process results/report.html
     ```
+
+    The report is fully self-contained (no external CDN dependencies) and provides a filterable, sortable table of every program unit in the corpus with all collected metrics in one view.
   </Step>
 </Steps>
 
-<Tip>
-  Give people a way to get help. This could be a link to a support page, a chat with a customer support agent, or a forum for your product.
+## Running Selected Steps
 
-  Example: Need help? Reach out to us at [support@yourcompany.com](mailto:support@yourcompany.com).
+You do not need to run all 19 steps every time. Forti4D provides three flags for controlling which steps execute:
+
+**Resume from a step** — skip all earlier steps and start from the named step (inclusive):
+
+```bash
+forti4d --project /path/to/source --output results/ --from complexity
+```
+
+**Run only specific steps** — useful for refreshing a single report without re-running the full pipeline:
+
+```bash
+forti4d --project /path/to/source --output results/ --only sloc consolidate html_report
+```
+
+**Skip specific steps** — run everything except the listed steps:
+
+```bash
+forti4d --project /path/to/source --output results/ --skip visual_graph
+```
+
+Flags can be combined freely. For example, to resume from `symbols` and skip `visual_graph`:
+
+```bash
+forti4d --project /path/to/source --output results/ --from symbols --skip visual_graph
+```
+
+## Quiet Mode
+
+By default, each step prints its full diagnostic output to the console. Pass `--quiet` to suppress this and show only step names, pass/fail indicators, and elapsed time:
+
+```bash
+forti4d --project /path/to/source --output results/ --quiet
+```
+
+<Note>
+  `--quiet` only affects the console. Every run writes a full-detail log at DEBUG level to `results/forti4d.log` regardless of this flag. Use `--log-file PATH` to write the log to a different location, or `--no-log-file` to disable it entirely.
+</Note>
+
+## Parallel Execution
+
+The `inventory`, `profiler`, and `blocks` steps support per-file parallelism. Use `--workers` to set the number of parallel worker processes:
+
+```bash
+forti4d --project /path/to/source --output results/ --workers 4
+```
+
+You can also set this via the `FORT_WORKERS` environment variable, which is useful for CI environments or shell aliases:
+
+```bash
+FORT_WORKERS=4 forti4d --project /path/to/source --output results/
+```
+
+An explicit `--workers` argument always takes precedence over `FORT_WORKERS`. If neither is set, the pipeline runs sequentially (one worker).
+
+## Continue on Error
+
+By default, the pipeline stops at the first failing step. Use `--continue-on-error` to proceed past failures and collect results from as many steps as possible:
+
+```bash
+forti4d --project /path/to/source --output results/ --continue-on-error
+```
+
+<Tip>
+  See the [CLI Reference](/cli/pipeline) for the complete flag reference, including environment variable configuration (`FORT_SRC`, `FORT_OUT`, `FORT_WORKERS`) and advanced usage patterns.
 </Tip>

@@ -1,0 +1,158 @@
+---
+title: "structure_analysis and cross_analysis — Architectural Classification"
+sidebarTitle: "Structure & Migration"
+description: "structure_analysis classifies source files by architectural role (CRITICAL_NODE, ORCHESTRATOR, etc.). cross_analysis assigns a migration strategy to each unit."
+---
+
+`structure_analysis.py` and `cross_analysis.py` form the architectural classification tier of the pipeline. `structure_analysis.py` uses the call graph coupling data to assign each source file a structural role — identifying which files are indispensable shared libraries, which orchestrate many dependencies, and which are completely isolated. `cross_analysis.py` then crosses statement density profiles with coupling metrics to compute two composite indices per unit and recommend a concrete migration strategy for each. Together with `executive_summary.py`, these three scripts close the Tier 2 pipeline and produce the primary outputs that guide migration planning.
+
+## structure_analysis.py — Architectural Role Classification
+
+<Note>
+`structure_analysis.py` is **step 5** of the pipeline.
+</Note>
+
+### Inputs
+
+- `<FORT_OUT>/dep_03_impact_matrix.csv`
+- `<FORT_OUT>/inventory_report.csv`
+
+### Output: `report_structure_analysis.csv`
+
+One row per source file, sorted by category priority.
+
+| Column | Description |
+|:---|:---|
+| `File` | Source file name |
+| `Category` | Architectural role (see below) |
+| `Fan_In_Max` | Maximum Fan-In across all units in the file |
+| `Unit_Max_In` | Unit with the highest Fan-In |
+| `Fan_Out_Max` | Maximum Fan-Out across all units in the file |
+| `Unit_Max_Out` | Unit with the highest Fan-Out |
+| `Total_Units` | Number of units in the file |
+| `Has_Main` | `YES` if the file contains a PROGRAM or IMPLICIT-MAIN unit |
+| `Detail` | Human-readable explanation of the classification |
+
+### Architectural Roles
+
+Categories are assigned in priority order — the first matching rule wins.
+
+| Category | Condition | Meaning |
+|:---|:---|:---|
+| `ENTRY_POINT` | File contains an IMPLICIT-MAIN unit | Compiles to an executable |
+| `ISLAND` | Fan-In = 0 and Fan-Out = 0 | No connections — potential dead code |
+| `CRITICAL_NODE` | Max Fan-In ≥ 10 | High reuse — core library unit |
+| `ORCHESTRATOR` | Max Fan-Out ≥ 10 | Coordinates many dependencies |
+| `WORKER` | Connected but Fan-Out < 5 | Service or calculation routine |
+| `MIXED` | All other cases | Standard functionality |
+
+<Note>
+Files present in `inventory_report.csv` but absent from `dep_03_impact_matrix.csv` (no call graph entries) are automatically classified as `ISLAND`. The threshold of 10 for CRITICAL_NODE and ORCHESTRATOR is empirically calibrated; it is a candidate for a future `--critical-threshold` CLI flag.
+</Note>
+
+## cross_analysis.py — Migration Strategy Assignment
+
+<Note>
+`cross_analysis.py` is **step 6** of the pipeline.
+</Note>
+
+### Inputs
+
+**Required:**
+- `<FORT_OUT>/report_density.csv`
+- `<FORT_OUT>/dep_03_impact_matrix.csv`
+
+**Optional (used when present, silently skipped otherwise):**
+- `<FORT_OUT>/report_reachability.csv` — enables the confirmed dead-code rule
+- `<FORT_OUT>/symbol_implicit.csv` — enables the E4 ICM penalty
+- `<FORT_OUT>/equivalences.csv` — enables the E4 ICM penalty
+
+### Output: `report_migration_strategy.csv`
+
+One row per unit, sorted by `Priority_Num` ascending (most urgent first), then by `IVC` descending within the same priority.
+
+| Column | Description |
+|:---|:---|
+| `Priority_Num` | Numeric priority (1 = most urgent) |
+| `Strategy` | Recommended action (see below) |
+| `File` | Source file name |
+| `Unit` | Unit name |
+| `Type` | Unit type |
+| `ICM` | Migration Complexity Index (base + E4 penalty) |
+| `IVC` | Calculation Value Index (= `Pct_Calc`) |
+| `Pct_Calc` | % calculation statements |
+| `Pct_Control` | % control-flow statements |
+| `Pct_Legacy` | % legacy statements |
+| `Fan_In` | Number of callers |
+| `Fan_Out` | Number of callees |
+| `Reachability_Status` | Reachability status (empty if CSV not present) |
+| `Explanation` | Human-readable reason for the strategy |
+
+### Composite Indices
+
+**IVC (Calculation Value Index):** equals `Pct_Calc`. Measures how much of the unit is pure algorithmic computation.
+
+**ICM (Migration Complexity Index):**
+
+```
+ICM_base = 0.15 × Pct_Control
+         + 0.45 × min(Pct_Legacy × 4, 100)
+         + 0.20 × min(Fan_Out × 5, 100)
+         + 0.20 × min(Fan_In × 5, 100)
+
+E4_penalty = 7.0 × (0.70 × no_IMPLICIT_NONE + 0.30 × has_EQUIVALENCE)
+
+ICM = ICM_base + E4_penalty
+```
+
+The **E4 penalty** adds up to 7 ICM points for units that lack `IMPLICIT NONE` (`no_IMPLICIT_NONE = 1`) and/or have at least one EQUIVALENCE aliasing group (`has_EQUIVALENCE = 1`). The penalty is applied only when `symbol_implicit.csv` and/or `equivalences.csv` are present.
+
+### Migration Strategy Rule Engine
+
+Rules are evaluated in order; the first match wins.
+
+| Priority | Strategy | Condition |
+|:---:|:---|:---|
+| — | `ELIMINATE` | `Reachability_Status = UNREACHABLE` — confirmed dead code (requires reachability CSV) |
+| 1 | `ANALYZE_UTILITY` / `ELIMINATE` | Fan-In = 0 (proxy dead-code check when reachability not available) |
+| 2 | `DIRECT_MIGRATION` | IVC > 50 and ICM < 30 — pure algorithm, low coupling |
+| 3 | `REPLACE_LIB` | Pct_IO > 30 or Pct_Decl > 40, and IVC < 20 — infrastructure/boilerplate |
+| 4 | `REFACTOR_CORE` | ICM > 25 and Fan-In > 5 — high-risk, high-dependency knot |
+| 5 | `REWRITE_ISOLATED` | ICM > 20 — complex but low systemic impact |
+| 6 | `STANDARD_MIGRATION` | All other connected units |
+
+Units with type `PROGRAM`, `IMPLICIT-MAIN`, `MODULE`, or `BLOCK DATA` are exempt from the Fan-In = 0 dead-code rule.
+
+<Warning>
+In a standard full pipeline run, `cross_analysis` executes at step 6 — before `symbols` (step 10), `equivalences` (step 12), and `reachability` (step 13). The three optional inputs are therefore never available in a standard run; the E4 penalty and the `UNREACHABLE → ELIMINATE` rule are silently skipped. To use the full rule engine, re-run `cross_analysis` manually after the pipeline completes:
+
+```bash
+forti4d --from cross_analysis --only cross_analysis
+```
+
+**Planned fix (v0.8):** move `cross_analysis` to after `reachability` in the pipeline.
+</Warning>
+
+## executive_summary.py — High-Level Project Summary
+
+<Note>
+`executive_summary.py` is **step 7** of the pipeline.
+</Note>
+
+`executive_summary.py` produces a Markdown overview of the entire corpus and a per-file statistics CSV.
+
+**Required inputs:** `inventory_report.csv`, `dep_03_impact_matrix.csv`
+
+**Optional inputs (enable the Scope Health section):** `symbol_implicit.csv`, `equivalences.csv`, `common_usage.csv`, `symbol_variables.csv`
+
+**Outputs:**
+- `<FORT_OUT>/PROJECT_SUMMARY.md` — global metrics, unit type distribution, top 10 largest files, legacy/I/O health indicators, optional Scope Health (E4) section, and top critical/orchestrating units
+- `<FORT_OUT>/file_statistics.csv` — one row per source file with LOC, unit count, legacy/IO flags, and unit types present
+
+<Warning>
+Like `cross_analysis`, `executive_summary` runs at step 7 — before the E4 scripts complete. The Scope Health section of `PROJECT_SUMMARY.md` is therefore absent in a standard full pipeline run. Re-run it after the pipeline to include E4 data:
+
+```bash
+forti4d --from executive_summary --only executive_summary
+```
+</Warning>

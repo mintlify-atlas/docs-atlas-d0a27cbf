@@ -1,0 +1,198 @@
+---
+title: "Forti4D Output Files Reference"
+sidebarTitle: "Output Files"
+description: "Complete reference for all 30+ output files produced by the forti4d pipeline: CSV reports, audit files, DOT graphs, and the HTML report."
+---
+
+Every time forti4d runs, it writes all output files to the directory configured via `--output` (or the `FORT_OUT` environment variable), which defaults to `results/`. Each pipeline step writes its own files and never modifies another step's output, so you can safely re-run individual steps without disturbing the rest. All output files are written even when the corpus produces no data for them — in that case the file contains column headers only.
+
+## Output Directory Structure
+
+```text
+<FORT_OUT>/
+├── inventory_report.csv
+├── dep_00_ambiguities.csv
+├── dep_01_master_data.csv
+├── dep_02_unit_graph.csv
+├── dep_03_impact_matrix.csv
+├── dep_04_external_orphans.csv
+├── dep_05_file_dependencies.csv
+├── dep_06_include_files.csv
+├── report_density.csv
+├── audit/
+│   └── <file>_DEBUG.csv       (one per source file)
+├── blocks/
+│   └── <file>_blocks.txt      (one per source file)
+├── report_structure_analysis.csv
+├── report_migration_strategy.csv
+├── PROJECT_SUMMARY.md
+├── file_statistics.csv
+├── report_complexity.csv
+├── common_usage.csv
+├── common_coupling.csv
+├── symbol_variables.csv
+├── symbol_signatures.csv
+├── symbol_implicit.csv
+├── type_definitions.csv
+├── type_components.csv
+├── equivalences.csv
+├── report_reachability.csv
+├── report_sloc.csv
+├── report_clones.csv
+├── report_consolidated.csv
+├── graph_*.dot
+├── report_prioritization.csv
+├── report.html
+└── forti4d.log
+```
+
+<Note>
+  `audit/` and `blocks/` are subdirectories, not flat files. Each contains one file per Fortran source file processed.
+</Note>
+
+---
+
+## All Output Files
+
+<Tabs>
+  <Tab title="Foundation">
+    These files are produced by the first two pipeline steps and form the base that every subsequent script reads.
+
+    | File | Produced by | Description |
+    | :--- | :--- | :--- |
+    | `inventory_report.csv` | `inventory.py` | All program units with type, parent unit, line range, and audit flags (legacy constructs, I/O statements). The foundation for all other scripts. |
+    | `dep_00_ambiguities.csv` | `dependencies.py` | Units defined in more than one source file. |
+    | `dep_01_master_data.csv` | `dependencies.py` | Raw CALL, USE, and function-call relationships before resolution. |
+    | `dep_02_unit_graph.csv` | `dependencies.py` | Resolved call graph with typed edges (CALL, USE, FUNC_CALL). |
+    | `dep_03_impact_matrix.csv` | `dependencies.py` | Fan-In and Fan-Out per unit. |
+    | `dep_04_external_orphans.csv` | `dependencies.py` | External references with no known definition in the corpus. |
+    | `dep_05_file_dependencies.csv` | `dependencies.py` | File-level dependency summary. |
+    | `dep_06_include_files.csv` | `dependencies.py` | Fortran `INCLUDE` file references with existence status. |
+  </Tab>
+
+  <Tab title="Profiling & Structure">
+    These files describe the internal character of each unit — what kinds of statements it contains and how it fits into the overall architecture.
+
+    | File | Produced by | Description |
+    | :--- | :--- | :--- |
+    | `report_density.csv` | `profiler.py` | Statement density profile per unit: % calculation, % control flow, % I/O, % legacy, % declarations. |
+    | `audit/<file>_DEBUG.csv` | `profiler.py` | Per-line statement classification for each source file. The primary intermediate artifact consumed by all extended analysis scripts. |
+    | `blocks/<file>_blocks.txt` | `block_analysis.py` | Block topology per source file — hierarchical view of control-flow nesting (IF/DO/SELECT depth) per unit. |
+    | `report_structure_analysis.csv` | `structure_analysis.py` | Architectural role per source file: `CRITICAL_NODE`, `ORCHESTRATOR`, `ENTRY_POINT`, `WORKER`, `ISLAND`, or `MIXED`. |
+    | `report_migration_strategy.csv` | `cross_analysis.py` | Migration strategy per unit — one of 7 recommended actions based on ICM and IVC indices. |
+    | `PROJECT_SUMMARY.md` | `executive_summary.py` | Executive summary in Markdown: global LOC, unit counts, type distribution, top monolithic files, and scope health indicators. |
+    | `file_statistics.csv` | `executive_summary.py` | Per-file summary statistics. |
+  </Tab>
+
+  <Tab title="Extended Analysis">
+    These files add deeper metrics on top of the foundation tier. They all require `audit/*_DEBUG.csv` files produced by `profiler.py`.
+
+    | File | Produced by | Description |
+    | :--- | :--- | :--- |
+    | `report_complexity.csv` | `complexity.py` | McCabe cyclomatic complexity (CC) per unit, with a level label: `LOW` (1–10), `MEDIUM` (11–20), `HIGH` (21–50), `CRITICAL` (>50). |
+    | `common_usage.csv` | `common_blocks.py` | F77 COMMON block usage — which units share each block. |
+    | `common_coupling.csv` | `common_blocks.py` | COMMON block coupling risk: `LOW` (1 unit), `MEDIUM` (2–4 units), `HIGH` (5+ units). |
+    | `report_reachability.csv` | `reachability.py` | Reachability from all entry points via BFS: `ENTRY_POINT`, `REACHABLE`, or `NOT_REACHABLE`. |
+    | `report_sloc.csv` | `sloc.py` | Precise SLOC count per unit: LOC, physical SLOC, net SLOC (logical statements only), blank lines, comments, continuations, comment density %. |
+    | `report_clones.csv` | `clones.py` | Duplicate unit pairs across files, classified as `IDENTICAL`, `SIMILAR`, or `DIVERGED`. |
+    | `report_consolidated.csv` | `consolidate.py` | All metrics joined into a single CSV — one row per unit, 34 columns. The primary analysis surface for manual investigation. |
+  </Tab>
+
+  <Tab title="E4 ScopeManager">
+    The E4 ScopeManager scripts extract the symbol-level microstructure of each unit (Axis Z of the MI4D model).
+
+    | File | Produced by | Description |
+    | :--- | :--- | :--- |
+    | `symbol_variables.csv` | `symbols.py` | Variable and PARAMETER constant declarations per unit (type, name, attributes, COMMON membership). |
+    | `symbol_signatures.csv` | `symbols.py` | Formal arguments of subroutines and functions with their declared types. |
+    | `symbol_implicit.csv` | `symbols.py` | IMPLICIT rules per unit — records whether `IMPLICIT NONE` is in effect. |
+    | `type_definitions.csv` | `derived_types.py` | Derived TYPE definitions with host unit and component count. |
+    | `type_components.csv` | `derived_types.py` | Component fields of each derived TYPE. |
+    | `equivalences.csv` | `equivalences.py` | EQUIVALENCE aliasing groups (union-find) — one row per variable per aliasing group. |
+  </Tab>
+
+  <Tab title="Graphs & Reports">
+    Final-stage outputs consumed directly by engineers and project managers.
+
+    | File | Produced by | Description |
+    | :--- | :--- | :--- |
+    | `graph_complete.dot` | `visual_graph.py` | Full corpus call graph — all nodes and all edges including USE. |
+    | `graph_simple.dot` | `visual_graph.py` | Simplified graph — reachable nodes only, CALL and FUNC_CALL edges only. |
+    | `graph_<names>.dot` | `visual_graph.py` | Subgraph scoped to one or more entry points (generated with `--entry`). |
+    | `report_prioritization.csv` | `prioritization.py` | Units ranked by composite migration risk score (0–100), with priority tier and per-component scores. |
+    | `report.html` | `html_report.py` | Self-contained HTML report — filterable and sortable unit table, priority summary cards. No external dependencies. |
+    | `forti4d.log` | `pipeline.py` | Full-detail DEBUG log for the entire run. Written regardless of `--quiet`. |
+  </Tab>
+</Tabs>
+
+---
+
+## Reading `report_consolidated.csv`
+
+`report_consolidated.csv` is the central analysis surface — a single flat table joining every metric produced across the pipeline. It has one row per program unit and 34 columns spanning physical size, complexity, coupling, density, reachability, COMMON block usage, and the full E4 symbol summary.
+
+<CardGroup cols={3}>
+  <Card title="Size columns" icon="ruler">
+    `LOC`, `SLOC_physical`, `SLOC_net`, `N_Comments`, `N_Continuation`, `Pct_Comment`
+  </Card>
+  <Card title="Complexity & coupling" icon="network-wired">
+    `CC`, `CC_Level`, `CC_SLOC`, `Fan_In`, `Fan_Out`
+  </Card>
+  <Card title="Density profile" icon="chart-bar">
+    `Pct_Calc`, `Pct_Control`, `Pct_IO`, `Pct_Legacy`
+  </Card>
+  <Card title="Reachability" icon="circle-dot">
+    `Status`, `Via_Entry_Points`
+  </Card>
+  <Card title="COMMON blocks" icon="database">
+    `N_Common_Blocks`, `Common_Blocks`
+  </Card>
+  <Card title="E4 scope" icon="shield">
+    `N_Local_Vars`, `N_Formal_Args`, `Implicit_None`, `Has_Equiv`, `N_Equiv_Groups`, `N_Derived_Types`
+  </Card>
+</CardGroup>
+
+Open `report_consolidated.csv` in a spreadsheet. Sort by any column, add computed columns (e.g. `CC × Fan_In`), and filter to focus on specific risk profiles. The [Interpretation guide](/outputs/interpretation) explains exactly which combinations to look for.
+
+---
+
+## Pipeline Order and Dependencies
+
+The diagram below shows which files feed which scripts. Output files are listed next to the arrow from each producer.
+
+```text
+Fortran source files
+        │
+        ▼
+  inventory.py → inventory_report.csv
+        │
+        ├──► dependencies.py → dep_00…dep_06_*.csv
+        │
+        ├──► profiler.py → report_density.csv
+        │              └──► audit/*_DEBUG.csv
+        │                        │
+        │              ┌─────────┴──────────┐
+        │              ▼                    ▼
+        │        block_analysis.py   complexity.py
+        │        common_blocks.py    symbols.py
+        │        equivalences.py     derived_types.py
+        │
+        ├──► sloc.py → report_sloc.csv
+        ├──► clones.py → report_clones.csv
+        ├──► structure_analysis.py → report_structure_analysis.csv
+        ├──► cross_analysis.py → report_migration_strategy.csv
+        ├──► reachability.py → report_reachability.csv
+        │
+        [all reports above]
+                │
+                ▼
+         consolidate.py → report_consolidated.csv
+                │
+                ├──► visual_graph.py → graph_*.dot
+                ├──► prioritization.py → report_prioritization.csv
+                └──► html_report.py → report.html
+```
+
+<Note>
+  `consolidate.py` must run after all analysis scripts. `prioritization.py` must run after `consolidate.py`. `html_report.py` must run after `prioritization.py`. The `forti4d` CLI manages this order automatically.
+</Note>

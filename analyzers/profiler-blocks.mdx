@@ -1,0 +1,127 @@
+---
+title: "profiler and block_analysis — Statement Classification"
+sidebarTitle: "Profiler & Blocks"
+description: "profiler classifies every logical statement in every source file into density categories. block_analysis builds per-file control-flow block topology from the audit CSVs."
+---
+
+`profiler.py` and `block_analysis.py` form the statement-classification tier of the pipeline. `profiler.py` reads every Fortran source file and classifies each logical statement into one of five groups — calculation, control flow, I/O, legacy, and declarations — producing both a per-unit density summary and a per-file audit CSV for every source file. `block_analysis.py` then takes those audit CSVs and constructs a hierarchical view of control-flow block nesting per unit, useful for understanding structural depth without reading raw source. Together, these two steps feed five later analyzers that all depend on the `audit/` directory.
+
+<Tip>
+`profiler.py` must complete before `complexity.py`, `common_blocks.py`, `symbols.py`, `derived_types.py`, and `equivalences.py` — all five read the `audit/*_DEBUG.csv` files it produces.
+</Tip>
+
+## profiler.py — Statement Density Analysis
+
+<Note>
+`profiler.py` is **step 3** of the pipeline.
+</Note>
+
+### Inputs
+
+- `<FORT_OUT>/inventory_report.csv`
+- Fortran source files in `FORT_SRC`
+
+### Outputs
+
+**`<FORT_OUT>/report_density.csv`** — one row per program unit.
+
+| Column | Description |
+|:---|:---|
+| `File` | Source file name |
+| `Unit` | Unit name |
+| `Type` | Unit type |
+| `Total_Statements` | Total classified statements in this unit |
+| `Total_Calc` | Statements in the calculation group |
+| `Total_Control` | Statements in the control-flow group |
+| `Total_IO` | Statements in the I/O group |
+| `Total_Legacy` | Statements in the legacy group |
+| `Total_Decl` | Statements in the declaration group |
+| `Pct_Calc` | `Total_Calc / Total_Statements × 100` |
+| `Pct_Control` | `Total_Control / Total_Statements × 100` |
+| `Pct_IO` | `Total_IO / Total_Statements × 100` |
+| `Pct_Legacy` | `Total_Legacy / Total_Statements × 100` |
+| `Pct_Decl` | `Total_Decl / Total_Statements × 100` |
+| `N_Common` | Count of COMMON statements |
+| `N_Equiv` | Count of EQUIVALENCE statements |
+| `N_Print` | Count of PRINT statements |
+| `N_Write` | Count of WRITE statements |
+
+**`<FORT_OUT>/audit/<filename>_DEBUG.csv`** — one file per source file, one row per logical line.
+
+| Column | Description |
+|:---|:---|
+| `Line` | Physical start line number |
+| `Kind` | Statement kind (e.g. `IF_CONSTRUCT`, `DO_CONSTRUCT`, `ASSIGNMENT_STMT`, `COMMON_STMT`, `IO_STMT`, `COMMENT`, …) |
+| `Content` | First 120 characters of the logical line text |
+
+### Statement Groups
+
+| Group | Statement Kinds Included |
+|:---|:---|
+| `CALC` | `ASSIGNMENT_STMT` and calculation actions (ALLOCATE, DEALLOCATE, POINTER_ACTION, …) |
+| `CONTROL` | `IF_CONSTRUCT`, `DO_CONSTRUCT`, `SELECT_CONSTRUCT`, `ASSOCIATE_CONSTRUCT`, `WHERE_CONSTRUCT`, `FORALL_CONSTRUCT`, `CONTROL_STMT`, `ELSE_STMT`, `CASE_STMT` |
+| `IO` | `IO_STMT` |
+| `LEGACY` | `COMMON_STMT`, `EQUIVALENCE_STMT`, `DATA_STMT`, `NAMELIST_STMT` |
+| `DECL` | `VAR_DECLARATION`, `PARAMETER_STMT`, `IMPLICIT_STMT`, `USE_STMT`, `IMPORT_STMT`, `TYPE_DEFINITION`, `ENUM_DEF`, `INTERFACE_BLOCK`, `CONTAINS_STMT`, `END_BLOCK_STMT` |
+
+<Note>
+The statement group taxonomy (CALC, CONTROL, IO, LEGACY, DECL) is a project-defined classification designed to characterize Fortran code for migration analysis. It is not based on a published classification standard.
+</Note>
+
+## block_analysis.py — Control-Flow Block Topology
+
+<Note>
+`block_analysis.py` is **step 4** of the pipeline. It has no single script invocation in the pipeline — the pipeline batch-runs it once per source file automatically.
+</Note>
+
+### Inputs
+
+- `<FORT_OUT>/audit/<filename>_DEBUG.csv` files (produced by `profiler.py`)
+- `<FORT_OUT>/inventory_report.csv` (loaded via `load_inventory()` for unit line ranges)
+
+### Output
+
+**`<FORT_OUT>/blocks/<filename>_blocks.txt`** — one file per source file. Shows the control-flow block nesting tree per unit. Each line reports: `start_line - end_line | depth | tree_indent type | top_3_kinds`.
+
+Example output:
+
+```text
+STRUCTURAL ANALYSIS: solver_main.f90
+================================================================================
+
+>> UNIT: solver_main (SUBROUTINE)
+    1-   45 |  0 |                              IF_CONSTRUCT        | IF_CONSTRUCT:12, ...
+   45-  120 |  1 | |_                          DO_CONSTRUCT        | DO_CONSTRUCT:8, ...
+  120-  145 |  2 | | |_                        SELECT_CONSTRUCT    | CASE_STMT:5, ...
+```
+
+### Constructs Tracked
+
+<CardGroup cols={2}>
+  <Card title="Block Openers">
+    `IF_CONSTRUCT`, `DO_CONSTRUCT`, `DO_WHILE_CONSTRUCT`, `SELECT_CONSTRUCT`, `SELECT_TYPE_CONSTRUCT`, `BLOCK_CONSTRUCT`, `INTERFACE_BLOCK`, `TYPE_DEFINITION`, `ASSOCIATE_CONSTRUCT`, `FORALL_CONSTRUCT`, `WHERE_CONSTRUCT`, `CRITICAL_CONSTRUCT`
+  </Card>
+  <Card title="Block Closers">
+    `END_IF_STMT`, `END_DO_STMT`, `END_SELECT_STMT`, `END_BLOCK_STMT`, `END_ASSOCIATE_STMT`, `END_FORALL_STMT`, `END_WHERE_STMT`, `END_CRITICAL_STMT`, `END_INTERFACE_STMT`, `END_TYPE_STMT`, `END_FUNCTION_STMT`, `END_SUBROUTINE_STMT`, `END_MODULE_STMT`, `END_PROGRAM_STMT`
+  </Card>
+</CardGroup>
+
+### Manual Invocation
+
+When running `block_analysis.py` outside the pipeline, pass a single audit file directly:
+
+```bash
+# Analyze one file and print to stdout
+python -m forti4d.analyzers.block_analysis results/audit/solver_main.f90_DEBUG.csv
+
+# Save output manually
+python -m forti4d.analyzers.block_analysis results/audit/solver_main.f90_DEBUG.csv \
+    > results/blocks/solver_main.f90_blocks.txt
+
+# Run all files via the pipeline
+forti4d --only blocks
+```
+
+<Note>
+Manual invocation via `python -m forti4d.analyzers.block_analysis` is a temporary workaround. A dedicated CLI subcommand for scripts with file arguments is planned.
+</Note>

@@ -1,0 +1,129 @@
+---
+title: "Forti4D Pipeline Architecture and Design"
+sidebarTitle: "Architecture"
+description: "Forti4D organizes analysis into four tiers: support libraries, the original pipeline, extended analysis, and the E4 ScopeManager. Each script reads CSV files from earlier steps."
+---
+
+Forti4D is a sequential pipeline of independent Python scripts orchestrated by `pipeline.py` — the `forti4d` CLI command. Each script reads one or more CSV files produced by earlier steps and writes its own output files; no script modifies another script's output. Input Fortran source files are read from the directory configured via `FORT_SRC` (or `--project`). All output files are written to `results/` by default, or to the directory configured via `FORT_OUT` (or `--output`). The full pipeline contains 19 steps and can be run in its entirety with a single `forti4d` invocation, or individual steps can be executed independently when their required inputs are already present.
+
+## Script Tiers
+
+The 19 pipeline scripts are organized into four tiers. Tiers build on each other: Tier 1 libraries are used by everything above them; Tier 2 must run before Tiers 3 and 4; and the consolidation and reporting scripts at the end of Tier 3 require all other tiers to have completed.
+
+### Tier 1 — Support Libraries
+
+These modules are not run directly. They are imported by the analysis scripts in higher tiers and provide the shared foundation that all analysis depends on.
+
+| Script | Role |
+| :--- | :--- |
+| `reader_logical.py` | Core Fortran line reader. Handles F77 fixed-form and F90 free-form continuation, comments, and blank lines. Returns a list of `LogicalLine` objects. Used by `inventory.py`, `profiler.py`, and `sloc.py`. |
+| `patterns_v1.py` | Regex patterns for program unit boundaries (`PROGRAM`, `MODULE`, `SUBROUTINE`, `FUNCTION`, `BLOCK DATA`, `END`). Used by `inventory.py`. |
+| `patterns_v2.py` | Extended regex patterns for statement classification (control flow, I/O, declarations, legacy constructs, etc.). Used by `profiler.py`. |
+| `kinds.py` | Enum of statement kinds (`StatementKind`). Referenced by `profiler.py` to classify and group statements. |
+
+### Tier 2 — Original Pipeline
+
+These seven scripts form the foundation. They must run in order; all other tiers depend on their output.
+
+```
+inventory.py
+    └─ dependencies.py
+    └─ profiler.py
+            └─ block_analysis.py  (batch, one file per source)
+    └─ structure_analysis.py
+    └─ cross_analysis.py
+    └─ executive_summary.py
+```
+
+| Script | Reads | Writes | Role |
+| :--- | :--- | :--- | :--- |
+| `inventory.py` | Fortran source files | `inventory_report.csv` | Foundation of the entire pipeline. Scans all source files, identifies every program unit (PROGRAM, MODULE, SUBROUTINE, FUNCTION, BLOCK DATA), and records its type, parent unit, line range, and audit flags. **All other scripts depend on this output.** |
+| `dependencies.py` | `inventory_report.csv` + source files | `dep_00` – `dep_06_*.csv` | Builds the call graph. Resolves CALL, USE, and function-call references between units. Computes Fan-In and Fan-Out per unit. Flags units defined in multiple files (ambiguities) and references with no known definition (orphans). |
+| `profiler.py` | `inventory_report.csv` + source files | `report_density.csv` + `audit/<file>_DEBUG.csv` | Classifies every logical statement using `patterns_v2.py` and `kinds.py`. Computes statement density profiles per unit (% calculation, % control flow, % I/O, % legacy, % declarations). The `audit/` DEBUG files are the primary intermediate artifact consumed by Tiers 3 and 4. |
+| `block_analysis.py` | `audit/<file>_DEBUG.csv` | `blocks/<file>_blocks.txt` | Block topology analysis. Produces a hierarchical view of control-flow block nesting (IF/DO/SELECT depth) per unit for each source file. Run as a batch step by the pipeline. |
+| `structure_analysis.py` | `dep_03_impact_matrix.csv`, `inventory_report.csv` | `report_structure_analysis.csv` | Classifies each source file into an architectural role based on its Fan-In/Fan-Out profile: `CRITICAL_NODE`, `ORCHESTRATOR`, `ENTRY_POINT`, `WORKER`, `ISLAND`, or `MIXED`. |
+| `cross_analysis.py` | `report_density.csv`, `dep_03_impact_matrix.csv` + optional E4 CSVs | `report_migration_strategy.csv` | Assigns a migration strategy to each unit by crossing density metrics with coupling data. Computes ICM (migration complexity) and IVC (calculation value) indices. Applies a penalty for units without `IMPLICIT NONE` or with EQUIVALENCE aliasing when E4 data is present. |
+| `executive_summary.py` | `inventory_report.csv`, `dep_03_impact_matrix.csv` + optional E4 CSVs | `PROJECT_SUMMARY.md`, `file_statistics.csv` | Produces a high-level executive summary in Markdown. Reports global metrics (LOC, unit counts, type distribution), top monolithic files, legacy/I/O health indicators, and the most critical and most orchestrating units. Adds a "Scope Health" section when E4 data is present. |
+
+### Tier 3 — Extended Analysis
+
+These scripts add deeper metrics and require Tier 2 outputs — especially the `audit/` directory produced by `profiler.py`. The consolidation and downstream reporting scripts at the end of this tier must run after all others have completed.
+
+```
+complexity.py       ─┐
+common_blocks.py    ─┤─ all read audit/*_DEBUG.csv + inventory_report.csv
+reachability.py     ─┘─ reads dep_02_unit_graph.csv + inventory_report.csv
+sloc.py             ─── reads source files + inventory_report.csv
+clones.py           ─── reads source files + inventory_report.csv
+        │
+        └──► consolidate.py  ─── joins all reports → report_consolidated.csv
+                    │
+                    ├──► visual_graph.py   ─── reads dep_02 + report_consolidated.csv
+                    │
+                    ├──► prioritization.py ─── reads consolidated + clones + strategy
+                    │
+                    └──► html_report.py    ─── reads report_prioritization.csv
+```
+
+| Script | Role |
+| :--- | :--- |
+| `complexity.py` | Computes McCabe cyclomatic complexity (CC) per unit by counting decision points (IF, ELSE IF, DO, non-default CASE, WHERE, FORALL). CC scale: LOW (1–10), MEDIUM (11–20), HIGH (21–50), CRITICAL (>50). |
+| `common_blocks.py` | Detects F77 COMMON block usage. Parses COMMON statements, resolves block names (including blank COMMON as `(BLANK)`), and reports which units share each block. Coupling risk: LOW (1 unit), MEDIUM (2–4 units), HIGH (5+ units). |
+| `reachability.py` | Dead code detection via BFS from all entry points (PROGRAM and IMPLICIT-MAIN units). Follows CALL, USE, and FUNC_CALL edges. Classifies each unit as `ENTRY_POINT`, `REACHABLE`, or `NOT_REACHABLE`. |
+| `sloc.py` | Precise SLOC counting per unit. Uses `reader_logical.py` to classify each physical line as BLANK, COMMENT, CODE, or CONTINUATION. Computes LOC, physical SLOC, net SLOC, and comment density percentage. |
+| `clones.py` | Detects identical, similar, and diverged duplicate units across files. Compares units with the same name in multiple files using normalized token sequences. Classifies each pair as `IDENTICAL`, `SIMILAR`, or `DIVERGED`. |
+| `consolidate.py` | Joins all per-unit reports into a single CSV (one row per unit). Adds the derived metric `CC_SLOC` and E4 symbol summary columns. **Must run after all other analysis scripts.** |
+| `visual_graph.py` | Generates Graphviz DOT files for call graph visualization. Supports full corpus view or per-entry-point filtered subgraphs. Nodes are colored by reachability status and shaped by unit type. Resolves `MAIN__` node names to inventory names. |
+| `prioritization.py` | Computes a composite risk/effort score (0–100) per unit across five signals: cyclomatic complexity (30%), Fan-In criticality (30%), legacy density (20%), clone state (15%), and E4 scope risk (5%). Ranks units into CRITICAL / HIGH / MEDIUM / LOW / DEAD_CODE tiers. |
+| `html_report.py` | Generates a self-contained HTML report with priority summary cards and a filterable/sortable unit table. No external dependencies — standard library only. |
+
+### Tier 4 — E4 ScopeManager
+
+These three scripts extract the symbol-level microstructure of each unit — Axis Z of the MI4D model. They all read the `audit/*_DEBUG.csv` files produced by `profiler.py` and use `inventory_report.csv` for scope resolution.
+
+```
+audit/*_DEBUG.csv + inventory_report.csv
+        │
+        ├──► symbols.py       → symbol_variables.csv
+        │                        symbol_signatures.csv
+        │                        symbol_implicit.csv
+        │
+        ├──► derived_types.py → type_definitions.csv
+        │                        type_components.csv
+        │
+        └──► equivalences.py  → equivalences.csv
+```
+
+| Script | Writes | Role |
+| :--- | :--- | :--- |
+| `symbols.py` | `symbol_variables.csv`, `symbol_signatures.csv`, `symbol_implicit.csv` | Extracts variable declarations, PARAMETER constants, formal arguments of subroutines/functions, and IMPLICIT rules from each unit. Handles F77 and F90 syntax. Cross-references COMMON statements to populate the `In_Common` field post-processing. |
+| `derived_types.py` | `type_definitions.csv`, `type_components.csv` | Extracts derived TYPE definitions and their component fields using a per-file state machine. Identifies the host unit for each TYPE via scope resolution. |
+| `equivalences.py` | `equivalences.csv` | Detects EQUIVALENCE aliasing groups using a union-find algorithm. Resolves transitive aliasing across multiple EQUIVALENCE statements within the same unit. One row per variable per aliasing group. |
+
+## Data Flow
+
+Fortran source files enter the pipeline through `inventory.py`, which produces `inventory_report.csv` — the single artifact that every subsequent script depends on for unit identity, line ranges, and file paths. From inventory, the pipeline branches into two parallel streams: `dependencies.py` builds the call graph (seven `dep_*.csv` files), and `profiler.py` classifies every statement in every file (producing `report_density.csv` and a per-source-file `audit/*_DEBUG.csv` directory).
+
+The `audit/` directory is the pivotal intermediate artifact. Five scripts from Tiers 3 and 4 — `complexity.py`, `common_blocks.py`, `symbols.py`, `derived_types.py`, and `equivalences.py` — all read it independently. Their outputs, together with `sloc.py` and `clones.py`, feed into `consolidate.py`, which joins every per-unit report into a single `report_consolidated.csv`. The final three scripts — `visual_graph.py`, `prioritization.py`, and `html_report.py` — read the consolidated report to produce the human-facing deliverables: Graphviz call graphs, a ranked migration table, and a self-contained HTML report.
+
+<Note>
+  Each script can be run independently if its required CSV inputs are already present on disk. This means you can re-run a single analysis step after correcting a source file without re-executing the entire pipeline. Use `forti4d --from <step>` to resume from a specific point, or `forti4d --only <step> [step…]` to run an explicit subset.
+</Note>
+
+## Key Design Decisions
+
+<Accordion title="No external parser">
+  Forti4D deliberately avoids general-purpose Fortran parsers (such as fparser or OFP). `reader_logical.py` handles continuation lines and comment detection for both F77 fixed-form and F90 free-form source. Statement classification is performed with calibrated regex patterns in `patterns_v1.py` and `patterns_v2.py`. This choice is intentional: general-purpose parsers are unreliable on hybrid real-world codebases where files may mix standards, use non-standard extensions, or rely on C preprocessor directives that are invisible to a Fortran parser. The regex approach is more fragile in theory but more robust in practice on the kind of legacy Fortran that Forti4D is designed to analyze.
+</Accordion>
+
+<Accordion title="Scope resolution via line ranges">
+  Every metric that must be attributed to a specific program unit — McCabe CC, SLOC, statement density, COMMON usage, symbol declarations — uses the same resolution strategy: for each source line, find all units whose `[Start_Line, End_Line]` range from `inventory_report.csv` contains that line, then assign the line to the innermost unit (the one with the highest `Start_Line`). This single invariant means that contained procedures, nested modules, and host-associated scopes are all attributed correctly without any additional bookkeeping.
+</Accordion>
+
+<Accordion title="IMPLICIT-MAIN units">
+  Files that compile to an executable without an explicit `PROGRAM` statement are a common pattern in legacy Fortran codebases. Forti4D identifies these as `IMPLICIT-MAIN` in the inventory. `dependencies.py` represents them as `MAIN__<filename>` nodes in the call graph. `reachability.py` and `visual_graph.py` resolve this naming convention back to the inventory name for display, so these units appear correctly in all reports despite the absence of a `PROGRAM` header.
+</Accordion>
+
+<Accordion title="In-process execution (no subprocess since v0.8.0)">
+  The full 19-step pipeline is orchestrated in-process by `pipeline.py`. Prior to v0.8.0, each step was executed as a separate subprocess. The current design runs every analyzer via `importlib.import_module` inside the same Python process, with the results dictionary (`ctx.data`) threaded through as shared state. Fault isolation that subprocesses used to provide is replaced by a `try/except` block in `run_step()` — this is what makes `--continue-on-error` work without spawning child processes. `SystemExit` is caught here as well, because several analyzers call `sys.exit(1)` on missing required input, which in-process would otherwise unwind the orchestrator.
+</Accordion>

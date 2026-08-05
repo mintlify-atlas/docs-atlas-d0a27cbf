@@ -1,0 +1,85 @@
+---
+title: "Forti4D: Fortran Static Analysis Toolkit"
+sidebarTitle: "Introduction"
+description: "Forti4D is a 19-step static analysis pipeline for Fortran F77/F90/F95 codebases. Audit complexity, dead code, clones, and migration risk without an external parser."
+---
+
+Forti4D is a Python toolkit for static analysis of Fortran source code. It is designed specifically for real-world hybrid Fortran corpora — projects that mix F77 fixed-form, F90 free-form, and F95 constructs in ways that cause general-purpose parsers such as fparser and OFP to fail. Instead of relying on an external parser, Forti4D uses a custom logical-line reader and regex patterns calibrated for legacy Fortran code, giving it reliable coverage across the widest possible range of scientific and engineering codebases.
+
+## The MI4D Conceptual Model
+
+Forti4D's analysis is grounded in the **MI4D** (4-Dimensional Integral Model), a framework that treats a Fortran program as a topological hyper-object existing simultaneously in four orthogonal dimensions. Bugs, technical debt, and structural risks are modelled as inconsistencies at the intersections of these dimensions.
+
+| Axis | Name | What it captures |
+| :--- | :--- | :--- |
+| **X** | Physical | Material existence on disk — files, line numbers, the immutable storage topology |
+| **Y** | Logical | Executable structure — program units, call graph, continuation-resolved logical lines |
+| **Z** | Scope | Semantic depth — symbol visibility from linker-global (Z=0) to ephemeral block-local (Z=4) |
+| **T** | State | Symbol lifetime — the evolution of each variable from undefined (Ω) through defined (Δ), static (Σ), to dead (†) |
+
+Every metric the pipeline produces is a projection onto one or more of these planes. For example, `complexity.py` measures CFG branching depth on the YT plane, while `symbols.py` populates the Z-axis with variable and parameter declarations.
+
+## Pipeline Overview
+
+The pipeline runs 19 steps in dependency order. Each step is an independent analyzer that reads the outputs of earlier steps and writes structured CSV, text, or HTML files to the output directory.
+
+The steps fall into four broad tiers:
+
+1. **Inventory & structure** (`inventory`, `dependencies`, `profiler`, `blocks`, `structure_analysis`, `cross_analysis`, `executive_summary`) — build the unit tree, call graph, and architectural classification.
+2. **Metrics** (`complexity`, `common_blocks`, `symbols`, `derived_types`, `equivalences`, `reachability`, `sloc`, `clones`) — compute per-unit measurements across all four MI4D axes.
+3. **Consolidation** (`consolidate`, `visual_graph`, `prioritization`) — join all reports, generate call graph DOT files, and rank units by composite migration risk.
+4. **Reporting** (`html_report`) — produce the self-contained, filterable HTML report.
+
+## Key Output Files
+
+| File | Produced by | Description |
+| :--- | :--- | :--- |
+| `inventory_report.csv` | `inventory` | All program units with type, line range, and audit flags |
+| `dep_02_unit_graph.csv` | `dependencies` | Resolved call graph (CALL, USE, FUNC\_CALL edges) |
+| `dep_03_impact_matrix.csv` | `dependencies` | Fan-In and Fan-Out per unit |
+| `report_density.csv` | `profiler` | Statement density profile per unit |
+| `report_complexity.csv` | `complexity` | McCabe cyclomatic complexity per unit |
+| `report_reachability.csv` | `reachability` | Reachability from entry points — dead code detection |
+| `report_sloc.csv` | `sloc` | Precise SLOC count per unit |
+| `report_clones.csv` | `clones` | Identical, similar, and diverged duplicate unit pairs |
+| `common_coupling.csv` | `common_blocks` | COMMON block coupling risk |
+| `symbol_variables.csv` | `symbols` | Variable and PARAMETER declarations per unit |
+| `equivalences.csv` | `equivalences` | EQUIVALENCE aliasing groups (union-find) |
+| `report_migration_strategy.csv` | `cross_analysis` | Migration strategy per unit |
+| `report_consolidated.csv` | `consolidate` | All metrics joined — one row per unit |
+| `report_prioritization.csv` | `prioritization` | Units ranked by composite migration risk score |
+| `graph_*.dot` | `visual_graph` | Graphviz call graph (full, simplified, or per entry point) |
+| `report.html` | `html_report` | Self-contained, filterable and sortable HTML report |
+| `PROJECT_SUMMARY.md` | `executive_summary` | Executive summary in Markdown |
+
+## Fortran Standard Support
+
+| Standard | Support |
+| :--- | :--- |
+| FORTRAN 77 (F77) | Full — fixed-form, COMMON, EQUIVALENCE, IMPLICIT, BLOCK DATA |
+| Fortran 90 (F90) | Full — free-form, modules, USE, derived types, INTERFACE blocks |
+| Fortran 95 (F95) | Full — FORALL, WHERE, PURE/ELEMENTAL attributes |
+| Fortran 2003+ | Not supported |
+
+## Requirements
+
+- **Python 3.8+**
+- **[Graphviz](https://graphviz.org/)** — optional; only needed for rendering the `.dot` files produced by the `visual_graph` step
+- **[loguru](https://github.com/Delgan/loguru)** — the only third-party Python dependency; installed automatically with `pip install forti4d`
+
+## Explore the Docs
+
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/installation">
+    Install Forti4D with pip or uv, verify with `forti4d --list`, and optionally set up Graphviz.
+  </Card>
+  <Card title="Quickstart" icon="bolt" href="/quickstart">
+    Run your first analysis in under five minutes and explore the HTML report.
+  </Card>
+  <Card title="CLI Reference" icon="terminal" href="/cli/pipeline">
+    Full reference for every flag: `--from`, `--only`, `--skip`, `--workers`, `--quiet`, and more.
+  </Card>
+  <Card title="Library API" icon="code" href="/cli/library-api">
+    Use `forti4d.run_pipeline()` in your own Python scripts and access in-memory results.
+  </Card>
+</CardGroup>

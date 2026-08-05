@@ -1,0 +1,116 @@
+---
+title: "Forti4D Known Limitations and Future Work"
+sidebarTitle: "Limitations"
+description: "Forti4D does not support Fortran 2003+ OOP features, C preprocessor directives, or full symbol-state tracking. This page lists all known limitations."
+---
+
+Forti4D is calibrated for real-world F77/F90/F95 hybrid corpora — the kind of mixed fixed-form/free-form code found in scientific and HPC codebases where general-purpose parsers typically fail. The toolkit deliberately avoids external Fortran parsers (fparser, OFP) in favor of a custom logical-line reader and calibrated regex patterns, which makes it robust on legacy code at the cost of being out-of-scope for anything beyond Fortran 95. The sections below document what the toolkit does not analyze, what the consequences are, and what is planned for future releases.
+
+---
+
+## Known Limitations
+
+<AccordionGroup>
+  <Accordion title="Fortran 2003+ features are not supported">
+    Forti4D fully supports FORTRAN 77, Fortran 90, and Fortran 95. Fortran 2003 and later are **not supported**.
+
+    The following constructs are not detected or analyzed:
+
+    - `CLASS` declarations and polymorphic variables
+    - `TYPE EXTENDS` — derived type inheritance hierarchies
+    - Procedure pointers (`PROCEDURE` attribute, abstract interfaces with `DEFERRED`)
+    - `BIND(C)` interoperability declarations
+    - Deferred-length character strings (`CHARACTER(LEN=:), ALLOCATABLE`)
+
+    These constructs will pass through the statement classifier as unrecognized lines. They will not cause a crash, but they will not appear in any output file. If the corpus mixes F95 and F2003 code, the analysis will silently under-count declarations and dependencies in the F2003 portions.
+
+    **Standard support summary:**
+
+    | Standard | Support |
+    | :--- | :--- |
+    | FORTRAN 77 (F77) | Full — fixed-form, COMMON, EQUIVALENCE, IMPLICIT, BLOCK DATA |
+    | Fortran 90 (F90) | Full — free-form, modules, USE, derived types, INTERFACE blocks |
+    | Fortran 95 (F95) | Full — FORALL, WHERE, PURE/ELEMENTAL attributes |
+    | Fortran 2003+ | Not supported |
+  </Accordion>
+
+  <Accordion title="C preprocessor directives are not evaluated">
+    Directives such as `#ifdef`, `#ifndef`, `#else`, `#endif`, `#define`, and `#include` (cpp) are treated as unrecognized physical lines. They are **never expanded, interpreted, or followed**.
+
+    This has several consequences for codebases that use conditional compilation — common in scientific and HPC Fortran code:
+
+    - **Conditional dependencies are always captured.** A `USE` or `CALL` inside an `#ifdef` block will appear in the dependency graph regardless of which compilation flags are active. The reported Fan-In and Fan-Out may be higher than what any single compiled configuration actually produces.
+
+    - **`#define` macros are not resolved.** Macro-expanded identifiers, type aliases, and parameterized values are not recognized by the statement classifier. A variable whose type is defined via a `#define` macro will appear undeclared.
+
+    - **`#include` (cpp) is not followed.** Only native Fortran `INCLUDE` statements are tracked and cross-referenced. Files pulled in via cpp `#include` are invisible to the analysis.
+
+    The underlying reason is intentional: the toolkit builds its Traceability Map (ℳ) from the literal source as written, not from the post-preprocessing view seen by the compiler. Expanding preprocessor directives would require knowing the active compilation flags for each analysis, which is not feasible in a static toolkit designed for corpora with no build system metadata.
+  </Accordion>
+
+  <Accordion title="INCLUDE files are tracked but not recursively analyzed">
+    Native Fortran `INCLUDE` statements are detected and recorded in `dep_06_include_files.csv` with their existence status (found / not found on disk). Cross-references are maintained at the file level.
+
+    However, included files are **not recursively analyzed as independent program units**. A `.inc` or `.h` file pulled in via `INCLUDE` is not scanned for unit boundaries, statement classifications, or dependency edges on its own. Its content is only visible to the analysis through the units that include it.
+
+    Consequences:
+    - If an `INCLUDE` file defines shared constants or common block layouts used across many source files, those definitions will not appear in `symbol_variables.csv` or `type_definitions.csv` as standalone entries.
+    - `report_reachability.csv` cannot classify an included file as `REACHABLE` or `NOT_REACHABLE` because it is not inventoried as a unit.
+  </Accordion>
+
+  <Accordion title="Assumed character lengths may not be fully captured">
+    The `CHARACTER*(*)` assumed-length syntax — used in F77 to declare a character argument whose length is inherited from the caller — may not be fully captured in `symbol_signatures.csv`.
+
+    The formal argument will be recorded, but its length attribute may be missing or reported as a raw string rather than a resolved length. This affects symbol signature completeness for subroutines and functions with character arguments and does not affect any other metric.
+  </Accordion>
+
+  <Accordion title="ENTRY statements are flagged but not modeled as callable units">
+    `ENTRY` statements — which define an additional named entry point into a subroutine or function — are flagged in the per-file `audit/*_DEBUG.csv` files and counted in the `N_Entry_Stmts` column of `report_consolidated.csv`.
+
+    However, `ENTRY` names are **not modeled as independent callable units** in the inventory. They do not receive their own rows in `inventory_report.csv`, do not appear as nodes in the call graph, and are not tracked for Fan-In. Callers that invoke an `ENTRY` name will produce a `dep_04_external_orphans.csv` entry (unresolved external reference) rather than a resolved edge in `dep_02_unit_graph.csv`.
+  </Accordion>
+
+  <Accordion title="Axis T (State Dimension) is only partially implemented">
+    The MI4D model on which forti4d is based defines four analysis axes: X (Physical), Y (Structural/Logical), Z (Scope), and T (State). Forti4D v0.7 fully implements X and Y, provides the foundational layer of Z, and only partially addresses T.
+
+    **What Axis T would cover:** for each symbol, at each point in the control flow graph, is the variable's value trustworthy? The full analysis detects:
+    - **Use Before Define** — reading a variable before it has been assigned
+    - **Conditional Define** — a variable is defined on some branches but not others, producing an ambiguous state at merge points
+    - **INTENT violations** — writing to an `INTENT(IN)` argument or reading from an `INTENT(OUT)` argument before assignment
+
+    **What is currently implemented:**
+    - `reachability.py` detects the extreme case of Axis T for entire units — units that are never reached from any entry point (dead code at the unit level).
+    - `complexity.py` measures CFG branching depth (McCabe CC) without tracking symbol states across branches.
+
+    The three full Axis T analyses (Use Before Define, Conditional Define, INTENT validation) are not yet implemented. The `report_consolidated.csv` columns that will eventually carry Axis T data (`N_Data_Stmts`, `N_Entry_Stmts`) are present but represent only statement counts, not state-flow analysis.
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Future Work
+
+<CardGroup cols={2}>
+  <Card title="Fortran 2003 support" icon="code">
+    CLASS hierarchy and polymorphic variables, TYPE EXTENDS inheritance, BIND(C) interoperability declarations, procedure pointers and deferred-type abstract interfaces, deferred-length character strings (`CHARACTER(LEN=:), ALLOCATABLE`).
+  </Card>
+  <Card title="Fortran 2008 support" icon="code">
+    Submodules (`SUBMODULE`), the BLOCK construct, `DO CONCURRENT` parallelism, CRITICAL and SYNC primitives for coarray synchronization.
+  </Card>
+  <Card title="Fortran 2018 support" icon="code">
+    Teams and events, collective subroutines, and the full Coarray Fortran synchronization model.
+  </Card>
+  <Card title="Deeper INCLUDE analysis" icon="file-import">
+    Recursive parsing of files pulled in via native Fortran `INCLUDE` as first-class program units — inventoried, profiled, and visible in the call graph and all downstream reports.
+  </Card>
+  <Card title="Full Axis T — symbol-state tracking" icon="chart-line">
+    Use Before Define detection, Conditional Define detection (ambiguous state at branch merge points), INTENT(IN/OUT) validation, and SAVE attribute consistency checking.
+  </Card>
+  <Card title="PyPI packaging" icon="box">
+    `pip install forti4d` after the v1.0 GitHub release. The current alpha is distributed from source.
+  </Card>
+</CardGroup>
+
+<Note>
+  The toolkit deliberately avoids general-purpose Fortran parsers (fparser, OFP) for reliability. Real-world legacy Fortran corpora routinely contain constructs that defeat standard parsers — mixed fixed/free form in a single file, non-standard continuation conventions, and comment characters in unusual positions. The custom `reader_logical.py` and calibrated regex patterns in `patterns_v1.py` / `patterns_v2.py` are what make the toolkit usable on these corpora. Future standard support will extend these patterns rather than replace them with a parser.
+</Note>

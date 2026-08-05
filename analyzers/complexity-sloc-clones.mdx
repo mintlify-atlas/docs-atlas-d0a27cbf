@@ -1,0 +1,154 @@
+---
+title: "complexity, sloc, and clones — Code Metrics"
+sidebarTitle: "Complexity & Clones"
+description: "complexity computes McCabe cyclomatic complexity per unit. sloc counts logical statements. clones detects identical, similar, and diverged duplicate unit pairs."
+---
+
+`complexity.py`, `sloc.py`, and `clones.py` are the core metrics scripts of Tier 3. `complexity.py` counts decision points in each unit to compute McCabe cyclomatic complexity, giving a direct measure of how difficult a unit is to test and maintain. `sloc.py` precisely counts lines of code by classifying every physical line as blank, comment, code, or continuation, then aggregates logical statement counts per unit. `clones.py` compares same-named units across files using normalized token sequences to identify whether duplicates are exact copies, maintained variants, or fully independent diverged implementations. All three outputs feed into `consolidate.py` for the final per-unit summary.
+
+## complexity.py — McCabe Cyclomatic Complexity
+
+<Note>
+`complexity.py` is **step 8** of the pipeline. It requires the `audit/` directory produced by `profiler.py`.
+</Note>
+
+### Inputs
+
+- `<FORT_OUT>/audit/<filename>_DEBUG.csv` for each source file
+- `<FORT_OUT>/inventory_report.csv`
+
+### Output: `report_complexity.csv`
+
+One row per program unit, sorted by CC descending.
+
+| Column | Description |
+|:---|:---|
+| `File` | Source file name |
+| `Unit` | Unit name |
+| `Type` | Unit type |
+| `CC` | McCabe cyclomatic complexity |
+| `Level` | Complexity level: `LOW`, `MEDIUM`, `HIGH`, or `CRITICAL` |
+| `Start_Line` | First line of the unit |
+| `End_Line` | Last line of the unit |
+| `Total_Lines` | Physical line count of the unit |
+
+### CC Calculation
+
+CC = 1 + (number of decision points in the unit)
+
+| Statement Kind | Count |
+|:---|:---|
+| `IF_CONSTRUCT` | +1 (block IF and single-line IF) |
+| `ELSE_STMT` | +1 only if `ELSE IF` / `ELSEIF`; plain `ELSE` = 0 |
+| `DO_CONSTRUCT` | +1 |
+| `SELECT_CONSTRUCT` | 0 (branches counted via CASE) |
+| `CASE_STMT` | +1 unless `CASE DEFAULT` or `CLASS DEFAULT` |
+| `WHERE_CONSTRUCT` | +1 |
+| `FORALL_CONSTRUCT` | +1 |
+
+### Complexity Scale
+
+| Level | CC Range | Meaning |
+|:---|:---|:---|
+| `LOW` | 1–10 | Simple, easy to test |
+| `MEDIUM` | 11–20 | Moderate complexity |
+| `HIGH` | 21–50 | High complexity, refactoring recommended |
+| `CRITICAL` | > 50 | Very high risk, hard to maintain |
+
+<Note>
+Scope resolution assigns each decision point to the innermost unit whose `[Start_Line, End_Line]` range contains the statement's line number. CC is computed from the audit CSVs, not directly from source — `profiler.py` must be run first.
+</Note>
+
+## sloc.py — Source Lines of Code
+
+<Note>
+`sloc.py` is **step 14** of the pipeline.
+</Note>
+
+### Inputs
+
+- Fortran source files in `FORT_SRC`
+- `<FORT_OUT>/inventory_report.csv`
+
+### Output: `report_sloc.csv`
+
+One row per program unit, sorted by `SLOC_net` descending.
+
+| Column | Description |
+|:---|:---|
+| `File` | Source file name |
+| `Unit` | Unit name |
+| `Type` | Unit type |
+| `LOC` | Total physical lines in the unit's line range |
+| `N_Blank` | Blank physical lines |
+| `N_Comments` | Comment-only physical lines |
+| `N_Continuation` | Continuation lines (2nd, 3rd… physical line of a multi-line statement) |
+| `SLOC_physical` | `LOC - N_Blank - N_Comments` (lines with actual code, including continuations) |
+| `SLOC_net` | `SLOC_physical - N_Continuation` (logical statements only) |
+| `Pct_Comment` | `N_Comments / LOC × 100` |
+
+### Line Classifications
+
+| Category | Condition |
+|:---|:---|
+| `COMMENT` | `LogicalLine.is_comment = True` |
+| `BLANK` | Not a comment, and `LogicalLine.text` is empty or whitespace |
+| `CODE` | First physical line of a non-comment, non-blank logical line |
+| `CONTINUATION` | 2nd, 3rd, … physical line of a multi-line statement |
+
+**`SLOC_net`** equals the number of logical statements in the unit — the most accurate size measure for comparing units, since it is independent of coding style (how many continuation lines are used per statement).
+
+**`Pct_Comment`** measures documentation density. Values below 5% on units with more than 50 logical statements indicate poorly documented code.
+
+<Note>
+`sloc.py`'s `LOC` column counts physical lines by reading each source file directly. This differs from the `Total_Lines` value in `inventory_report.csv` (`End_Line - Start_Line + 1`), which is a structural range estimate. Both are valid but answer different questions — the discrepancy is expected and not an error.
+</Note>
+
+## clones.py — Duplicate Unit Detection
+
+<Note>
+`clones.py` is **step 15** of the pipeline.
+</Note>
+
+### Inputs
+
+- `<FORT_OUT>/dep_00_ambiguities.csv` (from `dependencies.py`)
+- `<FORT_OUT>/inventory_report.csv`
+- Fortran source files in `FORT_SRC`
+
+### Output: `report_clones.csv`
+
+One row per pair of same-named units. Groups with N copies produce N×(N-1)/2 rows (e.g. 3 copies → 3 pairs). Rows are sorted DIVERGED first, then SIMILAR, then IDENTICAL.
+
+| Column | Description |
+|:---|:---|
+| `Unit` | Unit name |
+| `Type` | Unit type |
+| `File_A` | First file |
+| `File_B` | Second file |
+| `SLOC_A` | Normalized line count of unit in File_A |
+| `SLOC_B` | Normalized line count of unit in File_B |
+| `Similarity_Pct` | Similarity percentage (0–100) |
+| `Status` | `IDENTICAL`, `SIMILAR`, or `DIVERGED` |
+
+### Clone Classifications
+
+| Status | Condition |
+|:---|:---|
+| `IDENTICAL` | Similarity ratio = 1.00 (byte-for-byte identical after normalization) |
+| `SIMILAR` | Ratio ≥ 0.80 (default threshold) |
+| `DIVERGED` | Ratio < 0.80 |
+
+### Normalization
+
+Before comparison, each unit's source is normalized:
+
+1. Logical lines outside `[Start_Line, End_Line]` are excluded.
+2. Comment lines and blank lines are removed.
+3. Each remaining line is uppercased and whitespace-collapsed to a single space.
+
+This makes comparison insensitive to formatting, comment additions, and case conventions while preserving structural differences.
+
+<Note>
+`report_clones.csv` is always written — even when `dep_00_ambiguities.csv` is absent or empty (no duplicate unit names in the corpus). In that case the file contains headers only. This is a valid outcome, not an error.
+</Note>

@@ -1,72 +1,87 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mintlify Starter Kit",
+  "name": "Forti4D",
+  "theme": "luma",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#0404f9",
+    "light": "#0404a0",
+    "dark": "#3c7569"
   },
-  "favicon": "/favicon.svg",
-  "navigation": {
-    "pages": [
-      {
-        "group": "Getting Started",
-        "pages": [
-          "index",
-          "quickstart"
-        ]
-      }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
+  "favicon": "https://media.brand.dev/98197df7-c837-45a9-8cde-6d0caafd20c5.png",
   "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
+    "light": "https://media.brand.dev/f22a1076-2b26-4517-a4f2-e32d4d1fff6f.svg",
+    "dark": "https://media.brand.dev/f22a1076-2b26-4517-a4f2-e32d4d1fff6f.svg"
   },
   "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
-      }
-    ],
     "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://app.mintlify.com"
+      "type": "github",
+      "href": "https://github.com/acdeveloper-sci/forti4d"
     }
-  },
-  "contextual": {
-    "options": [
-      "copy",
-      "view",
-      "chatgpt",
-      "claude",
-      "perplexity",
-      "mcp",
-      "cursor",
-      "vscode"
-    ]
   },
   "footer": {
     "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
+      "github": "https://github.com/acdeveloper-sci/forti4d"
     }
+  },
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "installation",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Concepts",
+            "pages": [
+              "concepts/mi4d-model",
+              "concepts/fortran-support",
+              "concepts/architecture"
+            ]
+          },
+          {
+            "group": "Using the CLI",
+            "pages": [
+              "cli/pipeline",
+              "cli/configuration",
+              "cli/library-api"
+            ]
+          },
+          {
+            "group": "Analyzer Reference",
+            "pages": [
+              "analyzers/inventory",
+              "analyzers/dependencies",
+              "analyzers/profiler-blocks",
+              "analyzers/structure-cross-analysis",
+              "analyzers/complexity-sloc-clones",
+              "analyzers/scope-manager",
+              "analyzers/reachability",
+              "analyzers/reporting"
+            ]
+          },
+          {
+            "group": "Outputs & Interpretation",
+            "pages": [
+              "outputs/output-files",
+              "outputs/interpretation",
+              "outputs/limitations"
+            ]
+          },
+          {
+            "group": "Development",
+            "pages": [
+              "development/contributing",
+              "development/changelog"
+            ]
+          }
+        ]
+      }
+    ]
   }
 }
