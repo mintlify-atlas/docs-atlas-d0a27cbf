@@ -7,7 +7,6 @@
     "light": "#0404a0",
     "dark": "#3c7569"
   },
-  "favicon": "https://media.brand.dev/98197df7-c837-45a9-8cde-6d0caafd20c5.png",
   "navbar": {
     "primary": {
       "type": "github",
