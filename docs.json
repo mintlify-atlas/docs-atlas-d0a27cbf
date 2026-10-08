@@ -13,6 +13,10 @@
     "dark": "https://media.brand.dev/f22a1076-2b26-4517-a4f2-e32d4d1fff6f.svg"
   },
   "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/acdeveloper-sci/forti4d"
+    }
   },
   "footer": {
     "socials": {
